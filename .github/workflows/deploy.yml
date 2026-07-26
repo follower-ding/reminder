@@ -53,6 +53,9 @@ jobs:
               pm2 delete reminder-feishu-ws >/dev/null 2>&1 || true
               pm2 start feishu-ws.js --name reminder-feishu-ws --update-env --cwd "$PWD"
             fi
+            # 每 5 分钟调度，对齐事项 HH:mm（靠 ledger 去重）
+            pm2 delete reminder-check >/dev/null 2>&1 || true
+            pm2 start reminder.js --name reminder-check --cron "*/5 * * * *" --no-autorestart --cwd "$PWD" || true
             pm2 save
             sleep 2
             curl -sf "http://127.0.0.1:${PORT}/api/health" | head -c 400

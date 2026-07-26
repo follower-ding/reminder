@@ -60,7 +60,11 @@ const {
   parseHHMM,
   plannedTimeLabel,
   isAcked,
-  ackEvent
+  isArchived,
+  ackEvent,
+  unackEvent,
+  buildAckUrl,
+  verifyAckSig
 } = engine;
 
 let cachedTimezone = 'Asia/Shanghai';
@@ -163,7 +167,7 @@ function attachAckUrls(items, day) {
     if (!i.eventId) return i;
     return {
       ...i,
-      ackUrl: `${APP_URL}/api/ack/${i.eventId}?date=${encodeURIComponent(d)}&via=feishu`
+      ackUrl: buildAckUrl(APP_URL, i.eventId, d, 'feishu', TOKEN_SECRET)
     };
   });
 }
@@ -273,7 +277,16 @@ app.put('/api/events/:id', async (req, res) => {
     if (idx === -1) return res.status(404).json({ error: '未找到' });
     const merged = { ...data.events[idx], ...req.body, id: data.events[idx].id };
     const normalized = normalizeEventInput(merged);
-    data.events[idx] = { ...merged, ...normalized, id: data.events[idx].id, enabled: merged.enabled !== false };
+    const archived = merged.archived === true || merged.archived === 1;
+    data.events[idx] = {
+      ...merged,
+      ...normalized,
+      id: data.events[idx].id,
+      enabled: archived ? false : merged.enabled !== false,
+      archived,
+      archived_at: archived ? (merged.archived_at || new Date().toISOString()) : null,
+      acks: merged.acks && typeof merged.acks === 'object' ? merged.acks : {}
+    };
     data.history.push({ id: nextId(data.history), eventId: data.events[idx].id, action: 'update', detail: `${data.events[idx].type}:${data.events[idx].name}`, date: dateStr(), ts: Date.now() });
     await saveData(data);
     res.json(data.events[idx]);
@@ -333,14 +346,24 @@ app.get('/api/dashboard', async (req, res) => {
     const done = [];
     const upcoming = [];
     for (const ev of events) {
-      if (!ev.enabled) continue;
-      const r = checkEvent(ev, n);
+      const ackedToday = isAcked(ev, todayStr);
+      // 启用中，或今日刚确认后归档的待办（仍出现在「已确认」）
+      if (!ev.enabled && !(isArchived(ev) && ackedToday)) continue;
+      if (isArchived(ev) && !ackedToday) continue;
+      const r = checkEvent({ ...ev, enabled: true }, n);
       if (!r || !r.active) continue;
-      const row = { ...r, eventId: ev.id, space: ev.space, time: ev.schedule?.time || null, name: ev.name };
+      const row = {
+        ...r,
+        eventId: ev.id,
+        space: ev.space,
+        time: ev.schedule?.time || null,
+        name: ev.name,
+        archived: isArchived(ev)
+      };
       if (r.days === 0 || r.cycleDay !== undefined) {
-        if (isAcked(ev, todayStr)) done.push({ ...row, acked: true, ack: ev.acks[todayStr] });
-        else pending.push({ ...row, acked: false });
-      } else if ((r.days || 0) > 0 && (r.days || 99) <= 7) {
+        if (ackedToday) done.push({ ...row, acked: true, ack: ev.acks[todayStr] });
+        else if (!isArchived(ev) && ev.enabled) pending.push({ ...row, acked: false });
+      } else if ((r.days || 0) > 0 && (r.days || 99) <= 7 && ev.enabled && !isArchived(ev)) {
         upcoming.push(row);
       }
     }
@@ -358,6 +381,7 @@ app.get('/api/dashboard', async (req, res) => {
   }
 });
 
+/** 鉴权 API：供详情「误操作恢复」等；网页今日不做「确认收到」主按钮 */
 app.post('/api/events/:id/ack', async (req, res) => {
   try {
     const data = await loadData();
@@ -374,20 +398,39 @@ app.post('/api/events/:id/ack', async (req, res) => {
   }
 });
 
-/** 飞书深链：/?ack=ID 打开后前端调用；也支持 GET 直接确认 */
-app.get('/api/ack/:id', async (req, res) => {
+app.post('/api/events/:id/unack', async (req, res) => {
   try {
     const data = await loadData();
     const id = parseInt(req.params.id, 10);
     const idx = data.events.findIndex((e) => e.id === id);
-    if (idx === -1) return res.status(404).send('未找到事项');
-    const day = req.query.date || dateStr();
+    if (idx === -1) return res.status(404).json({ error: '未找到' });
+    const day = (req.body && req.body.date) || dateStr();
+    data.events[idx] = unackEvent(data.events[idx], day);
+    await saveData(data);
+    res.json({ ok: true, item: migrateEvent(data.events[idx]), date: day });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** 飞书卡片深链确认：必须带有效 HMAC sig */
+app.get('/api/ack/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const day = String(req.query.date || dateStr()).slice(0, 10);
+    const sig = req.query.sig;
+    if (!Number.isFinite(id) || !verifyAckSig(id, day, sig, TOKEN_SECRET)) {
+      return res.redirect(302, `${APP_URL}/?ack_error=1`);
+    }
+    const data = await loadData();
+    const idx = data.events.findIndex((e) => e.id === id);
+    if (idx === -1) return res.redirect(302, `${APP_URL}/?ack_error=missing`);
     data.events[idx] = ackEvent(data.events[idx], day, req.query.via || 'feishu');
     await saveData(data);
-    const redirect = `${APP_URL}/?acked=${id}&d=${day}`;
-    res.redirect(302, redirect);
+    const archived = isArchived(data.events[idx]) ? '&archived=1' : '';
+    res.redirect(302, `${APP_URL}/?acked=${id}&d=${encodeURIComponent(day)}${archived}`);
   } catch (e) {
-    res.status(500).send(e.message);
+    res.redirect(302, `${APP_URL}/?ack_error=1`);
   }
 });
 
@@ -501,7 +544,7 @@ app.get('/api/health', async (req, res) => {
     res.json({
       status: 'ok',
       time: dateStr(),
-      version: '4.1.2',
+      version: '4.1.7',
       brand: BRAND.name,
       app_url: APP_URL,
       deepseek: { configured: !!process.env.DEEPSEEK_API_KEY },
@@ -847,6 +890,11 @@ async function runScheduledPush() {
 
 app.get('/api/cron/check', async (req, res) => {
   try {
+    const secret = process.env.CRON_SECRET;
+    if (secret) {
+      const got = req.headers['x-cron-secret'] || req.query.secret;
+      if (got !== secret) return res.status(401).json({ error: 'unauthorized cron' });
+    }
     res.json(await runScheduledPush());
   } catch (e) {
     res.status(500).json({ error: e.message });

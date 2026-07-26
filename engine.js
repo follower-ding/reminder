@@ -1,6 +1,8 @@
 /**
  * Nudge engine — space 模型 + 调度 + 卡片
  */
+const crypto = require('crypto');
+
 const TYPE_META = {
   birthday: { label: '生日', icon: '🎂', modes: ['yearly'], headerColor: 'orange' },
   period: { label: '经期', icon: '🩸', modes: ['cycle'], headerColor: 'carmine' },
@@ -81,11 +83,78 @@ function isAcked(ev, dateYmd) {
   return !!(e.acks && e.acks[dateYmd]);
 }
 
+function isArchived(ev) {
+  return !!(ev && (ev.archived === true || ev.archived === 1));
+}
+
+/** HMAC 深链签名：eventId + date */
+function createAckSig(eventId, dateYmd, secret) {
+  const key = secret || process.env.TOKEN_SECRET || 'reminder-hmac-v1-change-me';
+  const payload = `${parseInt(eventId, 10)}.${String(dateYmd).slice(0, 10)}`;
+  return crypto.createHmac('sha256', key).update(payload).digest('base64url');
+}
+
+function verifyAckSig(eventId, dateYmd, sig, secret) {
+  if (!sig || typeof sig !== 'string') return false;
+  const expected = createAckSig(eventId, dateYmd, secret);
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  try {
+    return crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
+function buildAckUrl(appUrl, eventId, dateYmd, via, secret) {
+  const base = String(appUrl || process.env.APP_URL || 'https://reminder-three-gamma.vercel.app').replace(/\/$/, '');
+  const date = String(dateYmd).slice(0, 10);
+  const sig = createAckSig(eventId, date, secret);
+  const q = new URLSearchParams({
+    date,
+    via: via || 'feishu',
+    sig
+  });
+  return `${base}/api/ack/${parseInt(eventId, 10)}?${q.toString()}`;
+}
+
+/**
+ * 确认收到。待办（task）确认后归档停用，习惯/日子仅写 acks。
+ */
 function ackEvent(ev, dateYmd, via) {
   const e = migrateEvent(ev);
+  const day = String(dateYmd).slice(0, 10);
   const acks = { ...(e.acks || {}) };
-  acks[String(dateYmd).slice(0, 10)] = { at: new Date().toISOString(), via: via || 'app' };
-  return { ...e, acks };
+  acks[day] = { at: new Date().toISOString(), via: via || 'app' };
+  let out = { ...e, acks };
+  if (e.space === 'task') {
+    out = {
+      ...out,
+      enabled: false,
+      archived: true,
+      archived_at: new Date().toISOString()
+    };
+  }
+  return out;
+}
+
+/** 撤销某日确认；若因确认而归档的待办则恢复启用 */
+function unackEvent(ev, dateYmd) {
+  const e = migrateEvent(ev);
+  const day = String(dateYmd).slice(0, 10);
+  const acks = { ...(e.acks || {}) };
+  delete acks[day];
+  let out = { ...e, acks };
+  if (e.space === 'task' && isArchived(e)) {
+    out = {
+      ...out,
+      enabled: true,
+      archived: false,
+      archived_at: null
+    };
+  }
+  return out;
 }
 
 function parseHHMM(s) {
@@ -395,7 +464,7 @@ function collectDueItems(events, n, options = {}) {
   const catchUp = !!options.catchUp;
   const dateYmd = options.dateYmd;
   const skipAcked = !!options.skipAcked;
-  const migrated = migrateEvents(events);
+  const migrated = migrateEvents(events).filter((ev) => ev.enabled !== false && !isArchived(ev));
   const checked = migrated.map((ev) => {
     if (skipAcked && dateYmd && isAcked(ev, dateYmd)) return null;
     const r = checkEvent(ev, n);
@@ -404,6 +473,7 @@ function collectDueItems(events, n, options = {}) {
     return {
       ...r,
       eventId: ev.id,
+      name: ev.name,
       space: ev.space || 'habit',
       planned_time: plannedTimeLabel(ev, defaultTime),
       category: ev.space === 'task' ? 'temporary' : 'long_term'
@@ -413,6 +483,12 @@ function collectDueItems(events, n, options = {}) {
   const today = checked.filter((r) => r.days === 0 || r.cycleDay !== undefined);
   const upcoming = checked.filter((r) => r.days !== undefined && r.days > 0 && r.days <= 7 && r.cycleDay === undefined);
   return { today, upcoming, all: [...today, ...upcoming] };
+}
+
+function formatItemLine(x) {
+  const msg = x.message || x.name || '事项';
+  if (x.ackUrl) return `• ${msg}  [已收到](${x.ackUrl})`;
+  return `• ${msg}`;
 }
 
 function buildFeishuCard(dateLabel, items, title, appUrl, brandName) {
@@ -429,9 +505,7 @@ function buildFeishuCard(dateLabel, items, title, appUrl, brandName) {
   const pushSection = (key, heading) => {
     const list = groups[key];
     if (!list.length) return;
-    sections.push(`**${heading}**\n${list.map((x) => {
-      return `• ${x.message}`;
-    }).join('\n')}`);
+    sections.push(`**${heading}**\n${list.map(formatItemLine).join('\n')}`);
   };
   pushSection('period', '经期与周期');
   pushSection('birthday', '生日');
@@ -447,7 +521,44 @@ function buildFeishuCard(dateLabel, items, title, appUrl, brandName) {
     ? ''
     : isDigest
       ? '\n\n——\n有问题可私聊 Nudge 机器人'
-      : '\n\n——\n私聊机器人回复 **收到** 即可确认今日事项；也可直接问答';
+      : '\n\n——\n点事项旁 **已收到** 或卡片按钮确认；也可私聊机器人回「收到」';
+
+  const ackItems = (items || []).filter((i) => i.ackUrl && i.eventId);
+  const actionRows = [];
+  if (!isTest && !isDigest && ackItems.length) {
+    // 飞书单行最多约 3 个按钮
+    for (let i = 0; i < Math.min(ackItems.length, 6); i += 2) {
+      const slice = ackItems.slice(i, i + 2);
+      actionRows.push({
+        tag: 'action',
+        actions: slice.map((it) => ({
+          tag: 'button',
+          text: {
+            tag: 'plain_text',
+            content: `已收到 · ${(it.name || '事项').slice(0, 8)}`
+          },
+          type: 'primary',
+          multi_url: {
+            url: it.ackUrl,
+            android_url: it.ackUrl,
+            ios_url: it.ackUrl,
+            pc_url: it.ackUrl
+          }
+        }))
+      });
+    }
+  }
+  actionRows.push({
+    tag: 'action',
+    actions: [
+      {
+        tag: 'button',
+        text: { tag: 'plain_text', content: isTest ? '知道了' : '打开清单' },
+        type: 'default',
+        multi_url: { url, android_url: url, ios_url: url, pc_url: url }
+      }
+    ]
+  });
 
   return {
     msg_type: 'interactive',
@@ -471,17 +582,7 @@ function buildFeishuCard(dateLabel, items, title, appUrl, brandName) {
         { tag: 'hr' },
         { tag: 'div', text: { tag: 'lark_md', content: body + footerHint } },
         { tag: 'hr' },
-        {
-          tag: 'action',
-          actions: [
-            {
-              tag: 'button',
-              text: { tag: 'plain_text', content: isTest ? '知道了' : '打开清单' },
-              type: isTest ? 'default' : 'default',
-              multi_url: { url, android_url: url, ios_url: url, pc_url: url }
-            }
-          ]
-        }
+        ...actionRows
       ]
     }
   };
@@ -560,5 +661,10 @@ module.exports = {
   normalizeEventInput,
   plannedTimeLabel,
   isAcked,
-  ackEvent
+  isArchived,
+  ackEvent,
+  unackEvent,
+  createAckSig,
+  verifyAckSig,
+  buildAckUrl
 };

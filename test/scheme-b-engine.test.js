@@ -101,5 +101,12 @@ describe('scheme B engine', () => {
     ev = ackEvent(ev, '2026-07-27', 'app');
     assert.equal(isAcked(ev, '2026-07-27'), true);
     assert.equal(ev.acks['2026-07-27'].via, 'app');
+    const task = ackEvent(
+      { space: 'task', name: 't', enabled: true, schedule: { mode: 'once' }, acks: {} },
+      '2026-07-27',
+      'feishu'
+    );
+    assert.equal(task.archived, true);
+    assert.equal(task.enabled, false);
   });
 });

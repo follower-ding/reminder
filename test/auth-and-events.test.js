@@ -103,7 +103,7 @@ describe('auth + events blank-page regressions', () => {
     assert.match(appJs, /function eventFormHTML\(ev/, 'space-first form');
     assert.match(appJs, /space-picker|data-set-space/, 'space picker required');
     assert.doesNotMatch(appJs, /btn-ack|data-ack=/, 'ack belongs in Feishu, not web CTA');
-    assert.match(appJs, /在飞书回复/, 'today hints Feishu ack');
+    assert.match(appJs, /在飞书回复|已收到/, 'today hints Feishu ack');
     assert.doesNotMatch(indexHtml, /data-view="assistant"/, 'no in-app assistant tab');
     assert.match(appJs, /showEventForm\(null/, 'add must not pass MouseEvent as id');
     assert.match(appJs, /Array\.isArray\(events\)/, 'renderEvents must guard non-array');

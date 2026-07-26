@@ -247,9 +247,11 @@ h1,h2,h3 { font-family: var(--font-d); font-weight: 600; letter-spacing: -.02em;
 .done-fold summary::-webkit-details-marker { display: none; }
 .done-list { margin-top: .7rem; display: grid; gap: .45rem; }
 .done-row {
-  display: flex; gap: .7rem; align-items: flex-start; padding: .7rem .8rem;
+  display: flex; gap: .7rem; align-items: center; padding: .7rem .8rem;
   background: rgba(15,118,110,.04); border-radius: 14px; cursor: pointer;
 }
+.done-row .done-main { flex: 1; min-width: 0; }
+.done-row .btn-small { flex-shrink: 0; }
 .done-check {
   width: 22px; height: 22px; border-radius: 50%; background: rgba(5,150,105,.15); color: #059669;
   display: grid; place-items: center; font-size: .75rem; flex-shrink: 0; margin-top: .1rem;

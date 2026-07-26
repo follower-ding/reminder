@@ -161,8 +161,13 @@ function showApp() {
 }
 async function consumeAckQuery() {
   const q = new URLSearchParams(location.search);
+  if (q.get("ack_error")) {
+    toast("确认链接无效或已过期");
+    history.replaceState({}, "", location.pathname);
+    return;
+  }
   if (q.get("acked")) {
-    toast("飞书已确认");
+    toast(q.get("archived") ? "已确认，待办已归档" : "飞书已确认");
     history.replaceState({}, "", location.pathname);
   }
 }
@@ -214,7 +219,7 @@ async function renderToday(el) {
   const botOn = !!cfg.feishu?.bot_configured;
   const hideHint = localStorage.getItem(HINT_KEY) === "1";
   const subtitle = pending.length
-    ? `还有 ${pending.length} 件 · 飞书回「收到」即可确认`
+    ? `还有 ${pending.length} 件 · 飞书卡片点「已收到」确认`
     : (done.length ? "今天都搞定了" : "今天没有待办，留白也好");
 
   let hint = "";
@@ -222,7 +227,7 @@ async function renderToday(el) {
     if (!feishuOn) {
       hint = `<div class="hint-banner" id="feishu-hint">要收到推送，请到「设置」打开飞书 Webhook。<button type="button" class="hint-dismiss" data-dismiss-hint aria-label="关闭提示">关闭</button></div>`;
     } else {
-      hint = `<div class="hint-banner soft" id="feishu-hint">确认与问答在飞书完成：私聊机器人回「收到」，或直接聊天提问。<button type="button" class="hint-dismiss" data-dismiss-hint aria-label="关闭提示">知道了</button></div>`;
+      hint = `<div class="hint-banner soft" id="feishu-hint">在飞书回复或点卡片「已收到」确认；问答可私聊机器人。误点可在下方已确认里撤销。<button type="button" class="hint-dismiss" data-dismiss-hint aria-label="关闭提示">知道了</button></div>`;
     }
   }
 
@@ -265,7 +270,22 @@ async function renderToday(el) {
     };
   });
   el.querySelectorAll("[data-open]").forEach((n) => {
-    n.addEventListener("click", () => openDetail(+n.dataset.open));
+    n.addEventListener("click", (e) => {
+      if (e.target.closest("[data-unack]")) return;
+      openDetail(+n.dataset.open);
+    });
+  });
+  el.querySelectorAll("[data-unack]").forEach((b) => {
+    b.onclick = async (e) => {
+      e.stopPropagation();
+      const id = +b.dataset.unack;
+      const r = await api("/events/" + id + "/unack", {
+        method: "POST",
+        body: JSON.stringify({ date: dash.date })
+      });
+      toast(r.error || "已撤销确认");
+      renderToday(el);
+    };
   });
 }
 
@@ -289,10 +309,11 @@ function pendingCard(r, idx = 0) {
 function doneCard(r) {
   return `<div class="done-row" data-open="${r.eventId || ""}">
     <span class="done-check" aria-hidden="true">✓</span>
-    <div>
-      <div class="done-name">${esc(r.name || "")}</div>
+    <div class="done-main">
+      <div class="done-name">${esc(r.name || "")}${r.archived ? `<span class="badge">已归档</span>` : ""}</div>
       <div class="form-hint">${esc(cleanText(r.message || ""))}</div>
     </div>
+    <button type="button" class="btn-secondary btn-small" data-unack="${r.eventId || ""}" aria-label="撤销确认">撤销</button>
   </div>`;
 }
 function upcomingRow(r) {
@@ -309,8 +330,9 @@ async function renderEvents(el) {
   const enabled = events.filter((e) => e.enabled);
   const counts = { habit: 0, moment: 0, task: 0 };
   enabled.forEach((e) => { counts[spaceOf(e)] = (counts[spaceOf(e)] || 0) + 1; });
-  const filtered = enabled.filter((e) => spaceOf(e) === spaceFilter);
-  const disabled = events.filter((e) => !e.enabled && spaceOf(e) === spaceFilter);
+  const filtered = enabled.filter((e) => spaceOf(e) === spaceFilter && !e.archived);
+  const disabled = events.filter((e) => !e.enabled && !e.archived && spaceOf(e) === spaceFilter);
+  const archived = events.filter((e) => e.archived && spaceOf(e) === spaceFilter);
 
   el.innerHTML = `
     <div class="hero">
@@ -337,6 +359,9 @@ async function renderEvents(el) {
     ${disabled.length ? `
       <div class="section-title soft" style="margin-top:1.3rem"><h3>已停用</h3></div>
       <div class="card-grid">${disabled.map((ev) => eventCard(ev)).join("")}</div>` : ""}
+    ${archived.length ? `
+      <div class="section-title soft" style="margin-top:1.3rem"><h3>已归档</h3></div>
+      <div class="card-grid">${archived.map((ev) => eventCard(ev)).join("")}</div>` : ""}
   `;
   el.querySelectorAll("[data-space]").forEach((b) => {
     b.onclick = () => {
@@ -394,7 +419,7 @@ function eventCard(ev) {
     <div class="rail"></div>
     <div class="card-top">
       <div class="title">${esc(ev.name)}</div>
-      <div class="badge-row">${spaceBadge(space)}${ev.enabled ? "" : `<span class="badge">停用</span>`}</div>
+      <div class="badge-row">${spaceBadge(space)}${ev.archived ? `<span class="badge">已归档</span>` : ev.enabled ? "" : `<span class="badge">停用</span>`}</div>
     </div>
     <div class="meta">${esc(scheduleMeta(ev))}</div>
     <div class="card-foot">
@@ -428,10 +453,11 @@ async function renderDetail(el, id) {
         <div class="action-btns">
           ${ev.type === "period" ? `<button class="btn-secondary btn-small" id="period-log" type="button">今天开始了</button>` : ""}
           <button class="btn-secondary btn-small" id="edit-item" type="button">编辑</button>
-          <button class="btn-secondary btn-small" id="toggle-item" type="button">${ev.enabled ? "停用" : "启用"}</button>
+          ${ev.archived ? `<button class="btn-secondary btn-small" id="restore-item" type="button">取消归档</button>` : `<button class="btn-secondary btn-small" id="toggle-item" type="button">${ev.enabled ? "停用" : "启用"}</button>`}
+          <button class="btn-secondary btn-small" id="unack-item" type="button">撤销今日确认</button>
           <button class="btn-danger btn-small" id="delete-item" type="button">删除</button>
         </div>
-        <p class="form-hint" style="margin-top:10px">确认请在飞书回复「收到」。保存不会立刻推送。</p>
+        <p class="form-hint" style="margin-top:10px">确认请在飞书卡片点「已收到」。待办确认后会归档。保存不会立刻推送。</p>
       </div>
       <div class="nudge-card">
         <div class="section-title"><h3>推送记录</h3></div>
@@ -441,9 +467,28 @@ async function renderDetail(el, id) {
   `;
   document.getElementById("back-events").onclick = () => renderView("events");
   document.getElementById("edit-item").onclick = () => showEventForm(ev.id);
-  document.getElementById("toggle-item").onclick = async () => {
-    await api("/events/" + ev.id, { method: "PUT", body: JSON.stringify({ ...ev, enabled: !ev.enabled }) });
-    toast(ev.enabled ? "已停用" : "已启用");
+  const toggleBtn = document.getElementById("toggle-item");
+  if (toggleBtn) {
+    toggleBtn.onclick = async () => {
+      await api("/events/" + ev.id, { method: "PUT", body: JSON.stringify({ ...ev, enabled: !ev.enabled }) });
+      toast(ev.enabled ? "已停用" : "已启用");
+      openDetail(ev.id);
+    };
+  }
+  const restoreBtn = document.getElementById("restore-item");
+  if (restoreBtn) {
+    restoreBtn.onclick = async () => {
+      await api("/events/" + ev.id, {
+        method: "PUT",
+        body: JSON.stringify({ ...ev, archived: false, enabled: true, archived_at: null })
+      });
+      toast("已取消归档");
+      openDetail(ev.id);
+    };
+  }
+  document.getElementById("unack-item").onclick = async () => {
+    const r = await api("/events/" + ev.id + "/unack", { method: "POST", body: "{}" });
+    toast(r.error || "已撤销今日确认");
     openDetail(ev.id);
   };
   document.getElementById("delete-item").onclick = async () => {
