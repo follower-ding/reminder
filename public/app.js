@@ -600,26 +600,25 @@ async function renderSettings(el) {
         <p class="form-hint">问答在飞书机器人里完成。Key 仅读环境变量 DEEPSEEK_API_KEY。</p>
       </div>
       <div class="nudge-card">
-        <h3 style="margin-bottom:.7rem">飞书推送</h3>
-        <div class="toggle-row"><span>启用飞书</span><div class="toggle ${config.feishu?.enabled ? "on" : ""}" id="tog-fs"></div></div>
-        <div class="form-group"><label>Webhook（群自定义机器人）</label><input id="fs-url" value="${esc(config.feishu?.webhook_url || "")}"></div>
+        <h3 style="margin-bottom:.7rem">飞书推送（应用机器人）</h3>
+        <div class="toggle-row"><span>启用飞书推送</span><div class="toggle ${config.feishu?.enabled ? "on" : ""}" id="tog-fs"></div></div>
+        <div class="toggle-row">
+          <span>应用凭证 FEISHU_APP_*</span>
+          <span class="badge ${config.feishu?.bot_configured ? "ok" : "fail"}">${config.feishu?.bot_configured ? "已配置" : "未配置"}</span>
+        </div>
+        <div class="toggle-row">
+          <span>推送目标 chat_id</span>
+          <span class="badge ${config.feishu?.chat_id ? "ok" : "fail"}">${config.feishu?.chat_id ? "已绑定" : "未绑定"}</span>
+        </div>
+        <div class="form-group"><label>chat_id（可选，群里 @Nudge 会自动写入）</label><input id="fs-chat" value="${esc(config.feishu?.chat_id || "")}" placeholder="oc_xxx"></div>
+        <div class="form-group"><label>Webhook（可选，旧版群自定义机器人）</label><input id="fs-url" value="${esc(config.feishu?.webhook_url || "")}" placeholder="可不填"></div>
         <div class="action-btns">
           <button class="btn-primary btn-small" id="save-fs" type="button">保存</button>
           <button class="btn-secondary btn-small" id="test-fs" type="button">连通性测试</button>
           <button class="btn-secondary btn-small" id="run-cron" type="button">立即扫描</button>
         </div>
-        <p class="form-hint">事项卡 / 热点卡分开发。</p>
-      </div>
-      <div class="nudge-card">
-        <h3 style="margin-bottom:.7rem">飞书机器人（对话 + 收到）</h3>
-        <div class="toggle-row">
-          <span>应用机器人凭证</span>
-          <span class="badge ${config.feishu?.bot_configured ? "ok" : "fail"}">${config.feishu?.bot_configured ? "已配置" : "未配置"}</span>
-        </div>
-        <p class="form-hint">在飞书开放平台创建企业自建应用，开启机器人能力，订阅 <code>im.message.receive_v1</code>，请求地址填：</p>
-        <p class="form-hint mono">${esc((health.app_url || location.origin) + "/api/feishu/event")}</p>
-        <p class="form-hint">环境变量：<code>FEISHU_APP_ID</code> · <code>FEISHU_APP_SECRET</code> · 可选 <code>FEISHU_VERIFICATION_TOKEN</code></p>
-        <p class="form-hint">配置后：私聊机器人发「收到」确认今日事项；其它话交给 DeepSeek 回复。</p>
+        <p class="form-hint"><strong>无需 Webhook</strong>：企业自建应用 + 长连接即可。在目标群 @Nudge 发「绑定」自动记下 chat_id，打开「启用」后点连通性测试。</p>
+        <p class="form-hint">权限需含发消息；事项卡 / 热点卡分开发。</p>
       </div>
       <div class="nudge-card">
         <h3 style="margin-bottom:.7rem">Server酱</h3>
@@ -645,13 +644,23 @@ async function renderSettings(el) {
   ["tog-fs", "tog-sc"].forEach((id) => { document.getElementById(id).onclick = function () { this.classList.toggle("on"); }; });
   document.getElementById("save-fs").onclick = async () => {
     const c = await api("/config");
-    c.feishu = { enabled: document.getElementById("tog-fs").classList.contains("on"), webhook_url: document.getElementById("fs-url").value.trim() };
+    c.feishu = {
+      ...(c.feishu || {}),
+      enabled: document.getElementById("tog-fs").classList.contains("on"),
+      webhook_url: document.getElementById("fs-url").value.trim(),
+      chat_id: document.getElementById("fs-chat").value.trim()
+    };
     await api("/config", { method: "PUT", body: JSON.stringify(c) });
     toast("飞书已保存");
   };
   document.getElementById("test-fs").onclick = async () => {
     if (!confirm("发送【连通性测试】卡？不是事项提醒。")) return;
-    const res = await api("/feishu/test", { method: "POST", body: JSON.stringify({ enabled: true, webhook_url: document.getElementById("fs-url").value.trim(), persist: true }) });
+    const res = await api("/feishu/test", { method: "POST", body: JSON.stringify({
+      enabled: true,
+      webhook_url: document.getElementById("fs-url").value.trim(),
+      chat_id: document.getElementById("fs-chat").value.trim(),
+      persist: true
+    }) });
     toast(res.ok ? "测试卡已发送" : (res.error || "失败"));
   };
   document.getElementById("run-cron").onclick = async () => {
@@ -682,6 +691,7 @@ async function renderSettings(el) {
       feishu_enabled: document.getElementById("tog-fs").classList.contains("on"),
       serverchan_enabled: document.getElementById("tog-sc").classList.contains("on"),
       webhook_url: document.getElementById("fs-url").value.trim(),
+      chat_id: document.getElementById("fs-chat").value.trim(),
       sendkey: document.getElementById("sc-key").value.trim(),
       include_digest: true
     }) });

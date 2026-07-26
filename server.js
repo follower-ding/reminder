@@ -125,25 +125,53 @@ function verifyToken(token) {
 }
 
 // ─── 推送 ────────────────────────────────────────────
+function resolveFeishuChatId(config) {
+  return String(
+    config?.feishu?.chat_id || process.env.FEISHU_CHAT_ID || ''
+  ).trim();
+}
+
+function feishuPushReady(config) {
+  if (!config?.feishu?.enabled) return false;
+  if (String(config.feishu?.webhook_url || '').trim()) return true;
+  return feishuBot.botConfigured() && !!resolveFeishuChatId(config);
+}
+
 async function sendFeishuCard(config, cardBody) {
-  if (!config.feishu?.enabled || !config.feishu?.webhook_url) return { ok: false, error: '飞书未配置' };
-  try {
-    const res = await fetch(config.feishu.webhook_url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(cardBody),
-    });
-    const text = await res.text();
-    let parsed;
-    try { parsed = JSON.parse(text); } catch { parsed = null; }
-    if (parsed && parsed.code && parsed.code !== 0) {
-      return { ok: false, error: parsed.msg || `飞书错误 code=${parsed.code}`, data: text };
-    }
-    if (!res.ok) return { ok: false, error: `HTTP ${res.status}`, data: text };
-    return { ok: true, data: text };
-  } catch (e) {
-    return { ok: false, error: e.message };
+  if (!config.feishu?.enabled) return { ok: false, error: '飞书未启用' };
+  const webhook = String(config.feishu?.webhook_url || '').trim();
+  const chatId = resolveFeishuChatId(config);
+
+  // 优先应用机器人（无 Webhook）；有 webhook 时仍可用
+  if (!webhook && feishuBot.botConfigured() && chatId) {
+    return feishuBot.sendInteractiveCard(chatId, cardBody);
   }
+  if (webhook) {
+    try {
+      const res = await fetch(webhook, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cardBody),
+      });
+      const text = await res.text();
+      let parsed;
+      try { parsed = JSON.parse(text); } catch { parsed = null; }
+      if (parsed && parsed.code && parsed.code !== 0) {
+        return { ok: false, error: parsed.msg || `飞书错误 code=${parsed.code}`, data: text };
+      }
+      if (!res.ok) return { ok: false, error: `HTTP ${res.status}`, data: text };
+      return { ok: true, data: text };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  }
+  if (feishuBot.botConfigured() && !chatId) {
+    return {
+      ok: false,
+      error: '应用机器人已配置，但还没有 chat_id：请在目标群 @Nudge 发一句「绑定」，或在设置里填写 chat_id'
+    };
+  }
+  return { ok: false, error: '飞书未配置：请用应用机器人（chat_id）或群 Webhook' };
 }
 
 async function sendServerchan(config, title, content) {
@@ -177,10 +205,15 @@ async function pushReminderBundle(config, items, title) {
   if (!items.length) return out;
   const brand = config.brand?.name || BRAND.name;
   const enriched = attachAckUrls(items);
-  if (config.feishu?.enabled && config.feishu?.webhook_url) {
+  if (feishuPushReady(config)) {
     out.feishu = await sendFeishuCard(config, buildFeishuCard(dateStr(), enriched, title, APP_URL, brand));
   } else {
-    out.feishu = { ok: false, error: '飞书未配置' };
+    out.feishu = {
+      ok: false,
+      error: feishuBot.botConfigured()
+        ? '飞书未就绪：启用开关打开后，在群里 @Nudge 绑定 chat_id（无需 Webhook）'
+        : '飞书未配置'
+    };
   }
   if (config.serverchan?.enabled && config.serverchan?.sendkey) {
     out.serverchan = await sendServerchan(config, title || `${brand} · ${dateStr()}`, buildServerchanBody(dateStr(), enriched));
@@ -544,7 +577,7 @@ app.get('/api/health', async (req, res) => {
     res.json({
       status: 'ok',
       time: dateStr(),
-      version: '4.1.10',
+      version: '4.1.11',
       brand: BRAND.name,
       app_url: APP_URL,
       deepseek: { configured: !!process.env.DEEPSEEK_API_KEY },
@@ -692,7 +725,8 @@ app.post('/api/push/run', async (req, res) => {
       feishu: {
         ...(saved.feishu || {}),
         enabled: body.feishu_enabled != null ? !!body.feishu_enabled : !!saved.feishu?.enabled,
-        webhook_url: body.webhook_url != null ? String(body.webhook_url).trim() : (saved.feishu?.webhook_url || '')
+        webhook_url: body.webhook_url != null ? String(body.webhook_url).trim() : (saved.feishu?.webhook_url || ''),
+        chat_id: body.chat_id != null ? String(body.chat_id).trim() : (saved.feishu?.chat_id || '')
       },
       serverchan: {
         ...(saved.serverchan || {}),
@@ -978,7 +1012,8 @@ app.post('/api/feishu/test', async (req, res) => {
       feishu: {
         ...(saved.feishu || {}),
         enabled: body.enabled != null ? !!body.enabled : !!saved.feishu?.enabled,
-        webhook_url: body.webhook_url != null ? String(body.webhook_url).trim() : (saved.feishu?.webhook_url || '')
+        webhook_url: body.webhook_url != null ? String(body.webhook_url).trim() : (saved.feishu?.webhook_url || ''),
+        chat_id: body.chat_id != null ? String(body.chat_id).trim() : (saved.feishu?.chat_id || '')
       }
     };
     if (body.persist) {
@@ -987,7 +1022,7 @@ app.post('/api/feishu/test', async (req, res) => {
     }
     const card = buildFeishuCard(
       dateStr(),
-      [{ message: 'Webhook 可用。此消息不是任何事项提醒。', type: 'custom' }],
+      [{ message: '推送通道可用。此消息不是任何事项提醒。', type: 'custom' }],
       '【连通性测试】非事项提醒',
       APP_URL,
       BRAND.name

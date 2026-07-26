@@ -5,7 +5,7 @@ const feishuBot = require('./feishu-bot');
 const store = require('./store');
 const engine = require('./engine');
 
-const { loadData, saveData } = store;
+const { loadData, saveData, loadConfig, saveConfig } = store;
 const { migrateEvents, checkEvent, isAcked, ackEvent } = engine;
 
 function dateStr(tz = 'Asia/Shanghai') {
@@ -94,7 +94,27 @@ async function ackTodayFromBot(nameHint) {
   };
 }
 
+/** 群里 @ 机器人后自动记下 chat_id，供主动推送（无需 Webhook） */
+async function rememberChatIdFromEvent(body) {
+  try {
+    const meta = feishuBot.extractMessageMeta(body || {});
+    const chatId = String(meta.chatId || '').trim();
+    if (!chatId) return;
+    const config = await loadConfig();
+    if (config.feishu?.chat_id === chatId) return;
+    config.feishu = {
+      ...(config.feishu || {}),
+      chat_id: chatId
+    };
+    await saveConfig(config);
+    console.log('[feishu] remembered chat_id', `${chatId.slice(0, 10)}…`);
+  } catch (e) {
+    console.warn('[feishu] remember chat_id failed', e.message);
+  }
+}
+
 async function handleFeishuHttp(body) {
+  await rememberChatIdFromEvent(body);
   return feishuBot.handleEvent(body || {}, {
     ackToday: ackTodayFromBot,
     listPending: listPendingToday

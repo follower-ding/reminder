@@ -53,6 +53,41 @@ async function replyText(messageId, text) {
   return { ok: json.code === 0, data: json };
 }
 
+/**
+ * 应用机器人主动推卡片（无需群 Webhook）
+ * cardBody: buildFeishuCard() 的返回值 { msg_type, card } 或纯 card
+ */
+async function sendInteractiveCard(receiveId, cardBody, receiveIdType = 'chat_id') {
+  if (!receiveId) return { ok: false, error: '缺少 chat_id / receive_id' };
+  if (!botConfigured()) return { ok: false, error: '未配置 FEISHU_APP_ID / FEISHU_APP_SECRET' };
+  try {
+    const token = await getTenantAccessToken();
+    const card = cardBody?.card || cardBody;
+    const res = await fetch(
+      `${FEISHU_HOST}/open-apis/im/v1/messages?receive_id_type=${encodeURIComponent(receiveIdType)}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          receive_id: receiveId,
+          msg_type: 'interactive',
+          content: JSON.stringify(card)
+        })
+      }
+    );
+    const json = await res.json();
+    if (json.code !== 0) {
+      return { ok: false, error: json.msg || `飞书错误 code=${json.code}`, data: json };
+    }
+    return { ok: true, data: json };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
 /** 去掉群聊 @机器人 / @_user_1，便于识别「收到」 */
 function stripMentions(text) {
   return String(text || '')
@@ -194,6 +229,7 @@ module.exports = {
   botConfigured,
   getTenantAccessToken,
   replyText,
+  sendInteractiveCard,
   stripMentions,
   parseMessageText,
   matchAckIntent,

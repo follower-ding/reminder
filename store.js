@@ -14,7 +14,7 @@ const fs = require('fs');
 const path = require('path');
 
 const DEFAULT_CONFIG = {
-  feishu: { enabled: false, webhook_url: '' },
+  feishu: { enabled: false, webhook_url: '', chat_id: '' },
   serverchan: { enabled: false, sendkey: '' },
   check_times: ['09:00'],
   default_push_time: '09:00',
