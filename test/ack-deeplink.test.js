@@ -53,8 +53,9 @@ describe('ack deeplink + archive + unack', () => {
     assert.equal(verifyAckSig(12, '2026-07-27', 'bad', secret), false);
     assert.equal(verifyAckSig(13, '2026-07-27', sig, secret), false);
     const url = buildAckUrl('https://example.com', 12, '2026-07-27', 'feishu', secret);
-    assert.match(url, /sig=/);
-    assert.match(url, /\/api\/ack\/12/);
+    assert.match(url, /\/api\/ack\/12\/2026-07-27\//);
+    assert.equal(url.includes('&'), false);
+    assert.equal(url.includes('?'), false);
   });
 
   it('archives task on ack and restores on unack', () => {
@@ -96,8 +97,9 @@ describe('ack deeplink + archive + unack', () => {
     ], 'Nudge · 今日事项', 'https://example.com');
     const raw = JSON.stringify(card);
     assert.match(raw, /已收到/);
-    assert.match(raw, /sig=/);
+    assert.match(raw, /\/api\/ack\/9\//);
     assert.match(raw, /吃药/);
+    assert.match(raw, /"url":"https:\/\/example.com\/api\/ack\/9\//);
   });
 
   let server;
@@ -129,16 +131,17 @@ describe('ack deeplink + archive + unack', () => {
     });
     assert.equal(created.status, 200);
     const id = created.body.id;
-    const bad = await request(server, 'GET', `/api/ack/${id}?date=2026-07-27&via=feishu`);
-    assert.equal(bad.status, 302);
-    assert.match(String(bad.headers.location || ''), /ack_error/);
+    const bad = await request(server, 'GET', `/api/ack/${id}/2026-07-27/badsig/feishu`);
+    assert.equal(bad.status, 400);
+    assert.match(String(bad.body), /确认失败/);
 
     const day = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
     const sig = createAckSig(id, day);
-    const ok = await request(server, 'GET', `/api/ack/${id}?date=${day}&via=feishu&sig=${encodeURIComponent(sig)}`);
-    assert.equal(ok.status, 302);
-    assert.match(String(ok.headers.location || ''), /acked=/);
-    assert.match(String(ok.headers.location || ''), /archived=1/);
+    const pathUrl = `/api/ack/${id}/${day}/${encodeURIComponent(sig)}/feishu`;
+    assert.equal(pathUrl.includes('&'), false);
+    const ok = await request(server, 'GET', pathUrl);
+    assert.equal(ok.status, 200);
+    assert.match(String(ok.body), /已确认并归档|已确认收到/);
 
     const detail = await request(server, 'GET', `/api/events/${id}/detail`, { token });
     assert.equal(detail.body.item.archived, true);

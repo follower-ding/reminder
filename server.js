@@ -457,25 +457,79 @@ app.post('/api/events/:id/unack', async (req, res) => {
   }
 });
 
-/** 飞书卡片深链确认：必须带有效 HMAC sig */
-app.get('/api/ack/:id', async (req, res) => {
+function ackResultPage({ ok, title, detail }) {
+  const color = ok ? '#0F766E' : '#B45309';
+  return `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title}</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;background:#f4f7f6;color:#134e4a}
+.card{background:#fff;border-radius:16px;padding:28px 24px;max-width:360px;box-shadow:0 8px 30px rgba(15,118,110,.12);text-align:center}
+h1{font-size:1.35rem;margin:0 0 8px;color:${color}}
+p{margin:0 0 18px;line-height:1.5;color:#334155}
+a{display:inline-block;background:#0F766E;color:#fff;text-decoration:none;padding:10px 16px;border-radius:999px;font-weight:600}
+</style></head>
+<body><div class="card"><h1>${title}</h1><p>${detail}</p>
+<a href="${APP_URL}/">打开 Nudge</a></div></body></html>`;
+}
+
+async function handleAckDeepLink(req, res, { id, day, sig, via }) {
   try {
-    const id = parseInt(req.params.id, 10);
-    const day = String(req.query.date || dateStr()).slice(0, 10);
-    const sig = req.query.sig;
-    if (!Number.isFinite(id) || !verifyAckSig(id, day, sig, TOKEN_SECRET)) {
-      return res.redirect(302, `${APP_URL}/?ack_error=1`);
+    const eventId = parseInt(id, 10);
+    const date = String(day || dateStr()).slice(0, 10);
+    if (!Number.isFinite(eventId) || !verifyAckSig(eventId, date, sig, TOKEN_SECRET)) {
+      return res.status(400).type('html').send(ackResultPage({
+        ok: false,
+        title: '确认失败',
+        detail: '链接无效或已过期。请在飞书回复「收到」，或打开 Nudge 查看今日事项。'
+      }));
     }
     const data = await loadData();
-    const idx = data.events.findIndex((e) => e.id === id);
-    if (idx === -1) return res.redirect(302, `${APP_URL}/?ack_error=missing`);
-    data.events[idx] = ackEvent(data.events[idx], day, req.query.via || 'feishu');
+    const idx = data.events.findIndex((e) => e.id === eventId);
+    if (idx === -1) {
+      return res.status(404).type('html').send(ackResultPage({
+        ok: false,
+        title: '未找到事项',
+        detail: '该事项可能已删除。打开 Nudge 查看最新清单。'
+      }));
+    }
+    data.events[idx] = ackEvent(data.events[idx], date, via || 'feishu');
     await saveData(data);
-    const archived = isArchived(data.events[idx]) ? '&archived=1' : '';
-    res.redirect(302, `${APP_URL}/?acked=${id}&d=${encodeURIComponent(day)}${archived}`);
+    const archived = isArchived(data.events[idx]);
+    return res.type('html').send(ackResultPage({
+      ok: true,
+      title: archived ? '已确认并归档' : '已确认收到',
+      detail: archived
+        ? '待办已归档。可在 Nudge 清单「已归档」中恢复。'
+        : '今日事项已标记完成。'
+    }));
   } catch (e) {
-    res.redirect(302, `${APP_URL}/?ack_error=1`);
+    return res.status(500).type('html').send(ackResultPage({
+      ok: false,
+      title: '确认出错',
+      detail: e.message || '请稍后重试，或在飞书回复「收到」。'
+    }));
   }
+}
+
+/** 飞书卡片深链确认（路径型，无 &）：/api/ack/:id/:date/:sig/:via? */
+app.get('/api/ack/:id/:date/:sig/:via?', async (req, res) => {
+  await handleAckDeepLink(req, res, {
+    id: req.params.id,
+    day: req.params.date,
+    sig: decodeURIComponent(req.params.sig || ''),
+    via: req.params.via ? decodeURIComponent(req.params.via) : 'feishu'
+  });
+});
+
+/** 兼容旧 query 深链：/api/ack/:id?date=&sig=&via= */
+app.get('/api/ack/:id', async (req, res) => {
+  await handleAckDeepLink(req, res, {
+    id: req.params.id,
+    day: req.query.date,
+    sig: req.query.sig,
+    via: req.query.via || 'feishu'
+  });
 });
 
 app.get('/api/stats', async (req, res) => {
@@ -588,7 +642,7 @@ app.get('/api/health', async (req, res) => {
     res.json({
       status: 'ok',
       time: dateStr(),
-      version: '4.1.12',
+      version: '4.1.13',
       brand: BRAND.name,
       app_url: APP_URL,
       deepseek: { configured: !!process.env.DEEPSEEK_API_KEY },
