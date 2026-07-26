@@ -98,9 +98,23 @@ function stripMentions(text) {
     .trim();
 }
 
+/** 兼容 WS/HTTP 多种事件外壳，取出 message / chat_id */
+function resolveMessageNode(body) {
+  const candidates = [
+    body?.event?.message,
+    body?.message,
+    body?.event?.event?.message,
+    body?.data?.message
+  ];
+  for (const m of candidates) {
+    if (m && (m.message_id || m.chat_id || m.content)) return m;
+  }
+  return {};
+}
+
 function parseMessageText(event) {
   try {
-    const msg = event?.event?.message || event?.message || {};
+    const msg = resolveMessageNode(event);
     if (msg.message_type && msg.message_type !== 'text') return '';
     const raw = typeof msg.content === 'string' ? JSON.parse(msg.content) : (msg.content || {});
     return stripMentions(raw.text || '');
@@ -109,12 +123,22 @@ function parseMessageText(event) {
   }
 }
 
+function extractChatId(body) {
+  const message = resolveMessageNode(body);
+  const raw =
+    message.chat_id ||
+    body?.event?.chat_id ||
+    body?.chat_id ||
+    body?.event?.event?.message?.chat_id ||
+    '';
+  return String(raw || '').trim();
+}
+
 function extractMessageMeta(body) {
-  const event = body?.event || body;
-  const message = event?.message || {};
+  const message = resolveMessageNode(body);
   return {
     messageId: message.message_id,
-    chatId: message.chat_id,
+    chatId: extractChatId(body),
     chatType: message.chat_type,
     text: parseMessageText(body)
   };
@@ -127,6 +151,12 @@ function matchAckIntent(text) {
   const m = t.match(/^(收到|已收到|确认收到|确认|done|ok)(?:\s*[：:，,]?\s*(.+))?$/i);
   if (!m) return null;
   return { intent: 'ack', nameHint: (m[2] || '').trim() || null };
+}
+
+/** 「绑定」→ 记下 chat_id（勿交给 DeepSeek 瞎回） */
+function matchBindIntent(text) {
+  const t = String(text || '').trim();
+  return /^(绑定|bind|绑定推送)$/i.test(t);
 }
 
 async function chatWithDeepSeek(userText, contextNote) {
@@ -196,6 +226,23 @@ async function handleEvent(body, handlers = {}) {
     return { http: 200, json: { ok: true, ignored: 'empty' } };
   }
 
+  if (matchBindIntent(meta.text)) {
+    let chatId = meta.chatId;
+    if (handlers.bindChat) {
+      const bound = await handlers.bindChat(chatId);
+      chatId = bound?.chat_id || chatId;
+    }
+    const reply = chatId
+      ? `推送目标已绑定（${chatId.slice(0, 10)}…）。请打开网页设置 → 启用飞书推送 → 连通性测试。`
+      : '没拿到群 chat_id。请在【群聊】里 @我 再发「绑定」，不要只在私聊里发。';
+    try {
+      if (botConfigured()) await replyText(meta.messageId, reply);
+    } catch (e) {
+      return { http: 200, json: { ok: true, action: 'bind', chat_id: chatId || null, reply_error: e.message } };
+    }
+    return { http: 200, json: { ok: true, action: 'bind', chat_id: chatId || null } };
+  }
+
   const ack = matchAckIntent(meta.text);
   if (ack) {
     const result = handlers.ackToday
@@ -233,6 +280,8 @@ module.exports = {
   stripMentions,
   parseMessageText,
   matchAckIntent,
+  matchBindIntent,
+  extractChatId,
   chatWithDeepSeek,
   handleEvent,
   extractMessageMeta

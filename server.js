@@ -131,6 +131,17 @@ function resolveFeishuChatId(config) {
   ).trim();
 }
 
+/** 合并飞书配置：空 chat_id 不覆盖已绑定值（防止设置页/测试冲掉） */
+function mergeFeishuConfig(savedFeishu, patch = {}) {
+  const next = { ...(savedFeishu || {}) };
+  if (patch.enabled != null) next.enabled = !!patch.enabled;
+  if (patch.webhook_url != null) next.webhook_url = String(patch.webhook_url).trim();
+  if (patch.chat_id != null && String(patch.chat_id).trim()) {
+    next.chat_id = String(patch.chat_id).trim();
+  }
+  return next;
+}
+
 function feishuPushReady(config) {
   if (!config?.feishu?.enabled) return false;
   if (String(config.feishu?.webhook_url || '').trim()) return true;
@@ -556,7 +567,7 @@ app.put('/api/config', async (req, res) => {
       ...config,
       ...body,
       users: config.users,
-      feishu: { ...config.feishu, ...(body.feishu || {}) },
+      feishu: mergeFeishuConfig(config.feishu, body.feishu || {}),
       serverchan: { ...config.serverchan, ...(body.serverchan || {}) },
       digests: { ...config.digests, ...(body.digests || {}) },
       brand: { ...BRAND, ...(config.brand || {}), ...(body.brand || {}) }
@@ -577,7 +588,7 @@ app.get('/api/health', async (req, res) => {
     res.json({
       status: 'ok',
       time: dateStr(),
-      version: '4.1.11',
+      version: '4.1.12',
       brand: BRAND.name,
       app_url: APP_URL,
       deepseek: { configured: !!process.env.DEEPSEEK_API_KEY },
@@ -722,12 +733,11 @@ app.post('/api/push/run', async (req, res) => {
     const body = req.body || {};
     const config = {
       ...saved,
-      feishu: {
-        ...(saved.feishu || {}),
-        enabled: body.feishu_enabled != null ? !!body.feishu_enabled : !!saved.feishu?.enabled,
-        webhook_url: body.webhook_url != null ? String(body.webhook_url).trim() : (saved.feishu?.webhook_url || ''),
-        chat_id: body.chat_id != null ? String(body.chat_id).trim() : (saved.feishu?.chat_id || '')
-      },
+      feishu: mergeFeishuConfig(saved.feishu, {
+        enabled: body.feishu_enabled != null ? !!body.feishu_enabled : saved.feishu?.enabled,
+        webhook_url: body.webhook_url,
+        chat_id: body.chat_id
+      }),
       serverchan: {
         ...(saved.serverchan || {}),
         enabled: body.serverchan_enabled != null ? !!body.serverchan_enabled : !!saved.serverchan?.enabled,
@@ -1009,12 +1019,11 @@ app.post('/api/feishu/test', async (req, res) => {
     const body = req.body || {};
     const config = {
       ...saved,
-      feishu: {
-        ...(saved.feishu || {}),
-        enabled: body.enabled != null ? !!body.enabled : !!saved.feishu?.enabled,
-        webhook_url: body.webhook_url != null ? String(body.webhook_url).trim() : (saved.feishu?.webhook_url || ''),
-        chat_id: body.chat_id != null ? String(body.chat_id).trim() : (saved.feishu?.chat_id || '')
-      }
+      feishu: mergeFeishuConfig(saved.feishu, {
+        enabled: body.enabled != null ? !!body.enabled : saved.feishu?.enabled,
+        webhook_url: body.webhook_url,
+        chat_id: body.chat_id
+      })
     };
     if (body.persist) {
       saved.feishu = config.feishu;
