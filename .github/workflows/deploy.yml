@@ -11,6 +11,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: 打包部署产物
+        run: |
+          tar -czf reminder-deploy.tgz \
+            --exclude=./.git \
+            --exclude=./node_modules \
+            --exclude=./.env \
+            --exclude=./config.json \
+            --exclude=./data.json \
+            --exclude=./.playwright-mcp \
+            --exclude=./reminder-deploy.tgz \
+            .
+
       - name: 同步到服务器
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -18,14 +30,11 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT || 2222 }}
-          source: "."
-          target: ${{ secrets.REMOTE_DIR || '/opt/reminder' }}
-          strip_components: 0
+          source: reminder-deploy.tgz
+          target: /tmp
           overwrite: true
-          rm: false
-          exclude: "node_modules,.git,.env,config.json,data.json,.playwright-mcp"
 
-      - name: 重启服务
+      - name: 解压并重启服务
         uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -35,20 +44,36 @@ jobs:
           script: |
             set -e
             APP_DIR="${{ secrets.REMOTE_DIR || '/opt/reminder' }}"
+            mkdir -p "$APP_DIR"
+            # 旧目录若残留 root 拥有的 .git，会导致 scp/tar 失败；应用本身不需要 .git
+            rm -rf "$APP_DIR/.git"
+            tar -xzf /tmp/reminder-deploy.tgz -C "$APP_DIR"
+            rm -f /tmp/reminder-deploy.tgz
             cd "$APP_DIR"
             npm install --omit=dev
             if ! command -v pm2 >/dev/null 2>&1; then
               sudo npm install -g pm2
             fi
-            test -f .env || printf 'PORT=3333\nAPP_URL=http://49.235.172.214:3333\n' > .env
-            export $(grep -v '^#' .env | xargs -d '\n' -r) || true
+            if [ ! -f .env ]; then
+              printf 'PORT=3333\nAPP_URL=http://49.235.172.214:3333\n' > .env
+            fi
+            set -a
+            # shellcheck disable=SC1091
+            . ./.env
+            set +a
             PORT="${PORT:-3333}"
+            # 确保 APP_URL 指向本机 VPS（勿继续指向 Vercel）
+            if ! grep -q '^APP_URL=' .env; then
+              echo 'APP_URL=http://49.235.172.214:3333' >> .env
+            fi
             pm2 delete reminder >/dev/null 2>&1 || true
             pm2 start server.js --name reminder --update-env --cwd "$APP_DIR"
             if [ -f feishu-ws.js ]; then
               pm2 delete reminder-feishu-ws >/dev/null 2>&1 || true
               pm2 start feishu-ws.js --name reminder-feishu-ws --update-env --cwd "$APP_DIR"
             fi
+            pm2 delete reminder-check >/dev/null 2>&1 || true
+            pm2 start reminder.js --name reminder-check --cron "0 9,14,21 * * *" --no-autorestart --cwd "$APP_DIR" || true
             pm2 save
             sleep 2
             curl -sf "http://127.0.0.1:${PORT}/api/health" | head -c 400
