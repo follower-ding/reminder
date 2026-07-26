@@ -5,3 +5,4 @@ data.json
 *.log
 .DS_Store
 thumbs.db
+.playwright-mcp/

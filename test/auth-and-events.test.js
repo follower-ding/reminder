@@ -87,7 +87,7 @@ describe('auth + events blank-page regressions', () => {
   it('dashboard includes daily events as today (days:0)', async () => {
     const created = await request(server, 'POST', '/api/events', {
       token,
-      body: { type: 'medicine', name: '每日药-回归', schedule: { mode: 'daily' }, messages: { default: '吃药' } }
+      body: { type: 'custom', name: '每日药-回归', schedule: { mode: 'daily', time: '09:00' }, messages: { default: '吃药' } }
     });
     assert.equal(created.status, 200);
     const dash = await request(server, 'GET', '/api/dashboard', { token });
@@ -97,10 +97,15 @@ describe('auth + events blank-page regressions', () => {
     assert.equal(hit.days, 0);
   });
 
-  it('eventFormHTML does not throw ReferenceError on isNew', () => {
+  it('event form is space-first and guards non-array events', () => {
     const appJs = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
-    assert.match(appJs, /function eventFormHTML\(ev,\s*isNew/, 'isNew must be a parameter');
-    assert.match(appJs, /showEventForm\(null\)/, 'add button must not pass MouseEvent as id');
+    const indexHtml = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+    assert.match(appJs, /function eventFormHTML\(ev/, 'space-first form');
+    assert.match(appJs, /space-picker|data-set-space/, 'space picker required');
+    assert.doesNotMatch(appJs, /btn-ack|data-ack=/, 'ack belongs in Feishu, not web CTA');
+    assert.match(appJs, /在飞书回复/, 'today hints Feishu ack');
+    assert.doesNotMatch(indexHtml, /data-view="assistant"/, 'no in-app assistant tab');
+    assert.match(appJs, /showEventForm\(null/, 'add must not pass MouseEvent as id');
     assert.match(appJs, /Array\.isArray\(events\)/, 'renderEvents must guard non-array');
   });
 });

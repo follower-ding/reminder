@@ -1,0 +1,55 @@
+:root {
+  --color-primary: #0D9488;
+  --color-secondary: #14B8A6;
+  --color-cta: #F97316;
+  --color-accent: #F97316;
+  --color-background: #F0FDFA;
+  --color-surface: #FFFFFF;
+  --color-text: #134E4A;
+  --color-text-muted: #5B7C78;
+  --color-border: #99F6E4;
+  --color-period: #E11D48;
+  --color-birthday: #EA580C;
+  --color-danger: #DC2626;
+  --color-success: #059669;
+
+  --font-display: "Varela Round", "Nunito Sans", system-ui, sans-serif;
+  --font-body: "Nunito Sans", "Noto Sans SC", system-ui, sans-serif;
+  --font-mono: ui-monospace, monospace;
+
+  --space-xs: 0.25rem;
+  --space-sm: 0.5rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2rem;
+  --space-2xl: 3rem;
+  --space-3xl: 4rem;
+  --space-4xl: 6rem;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+
+  --shadow-sm: 0 1px 2px rgba(13, 148, 136, 0.06);
+  --shadow-md: 0 6px 16px rgba(13, 148, 136, 0.1);
+  --shadow-lg: 0 14px 32px rgba(19, 78, 74, 0.12);
+
+  --motion-micro: 180ms;
+  --motion-standard: 300ms;
+  --motion-entrance: 700ms;
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  --header-h: 56px;
+  --tab-h: 64px;
+  --max-w: 720px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

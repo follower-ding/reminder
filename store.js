@@ -16,8 +16,23 @@ const path = require('path');
 const DEFAULT_CONFIG = {
   feishu: { enabled: false, webhook_url: '' },
   serverchan: { enabled: false, sendkey: '' },
-  check_times: ['09:00', '14:00', '21:00'],
+  check_times: ['09:00'],
+  default_push_time: '09:00',
   timezone: 'Asia/Shanghai',
+  brand: { name: 'Nudge', tagline: '轻推一下，刚好想起' },
+  digests: {
+    enabled: true,
+    push_time: '20:00',
+    github: { enabled: true },
+    news: { enabled: true, feeds: ['https://hnrss.org/frontpage'] },
+    learning: { enabled: true, topics: ['前端', '算法', '英语', '写作'] },
+    sources: {
+      github_trending: { enabled: true },
+      ai_news: { enabled: false, feeds: [] },
+      hn_frontpage: { enabled: true },
+      custom_rss: { enabled: false, feeds: [] }
+    }
+  },
   users: { admin: { password: 'admin123', label: '管理员' } }
 };
 
@@ -39,15 +54,16 @@ let sqlClient = null;
 let schemaReady = false;
 
 function emptyData() {
-  return { events: [], history: [] };
+  return { events: [], history: [], push_ledger: [] };
 }
 
 function normalizeData(raw) {
-  if (Array.isArray(raw)) return { events: raw, history: [] };
+  if (Array.isArray(raw)) return { events: raw, history: [], push_ledger: [] };
   const data = raw && typeof raw === 'object' ? raw : {};
   return {
     events: Array.isArray(data.events) ? data.events : [],
-    history: Array.isArray(data.history) ? data.history : []
+    history: Array.isArray(data.history) ? data.history : [],
+    push_ledger: Array.isArray(data.push_ledger) ? data.push_ledger : []
   };
 }
 
@@ -58,6 +74,13 @@ function normalizeConfig(raw) {
     ...cfg,
     feishu: { ...DEFAULT_CONFIG.feishu, ...(cfg.feishu || {}) },
     serverchan: { ...DEFAULT_CONFIG.serverchan, ...(cfg.serverchan || {}) },
+    digests: {
+      ...DEFAULT_CONFIG.digests,
+      ...(cfg.digests || {}),
+      github: { ...DEFAULT_CONFIG.digests.github, ...(cfg.digests?.github || {}) },
+      news: { ...DEFAULT_CONFIG.digests.news, ...(cfg.digests?.news || {}) },
+      learning: { ...DEFAULT_CONFIG.digests.learning, ...(cfg.digests?.learning || {}) }
+    },
     users: { ...DEFAULT_CONFIG.users, ...(cfg.users || {}) }
   };
 }
@@ -95,17 +118,19 @@ function readPushTestData(nowParts) {
   const n = nowParts || {};
   const month = n.month || (new Date().getMonth() + 1);
   const day = n.day || new Date().getDate();
+  const hh = String(n.hour != null ? n.hour : new Date().getHours()).padStart(2, '0');
+  const time = `${hh}:00`;
   return {
     events: [
       {
         id: 9001,
-        type: 'medicine',
-        name: '【测试】每日吃药提醒',
+        type: 'custom',
+        name: '【测试】每日学习',
         category: 'test',
         enabled: true,
         remind_ahead: 0,
-        schedule: { mode: 'daily' },
-        messages: { default: '💊 【推送测试】该吃药了（daily）' }
+        schedule: { mode: 'daily', time },
+        messages: { default: '📚 【推送测试】该学习了' }
       },
       {
         id: 9002,
@@ -114,7 +139,7 @@ function readPushTestData(nowParts) {
         category: 'test',
         enabled: true,
         remind_ahead: 0,
-        schedule: { mode: 'yearly', month, day },
+        schedule: { mode: 'yearly', month, day, time },
         messages: {
           today: '🎂 【推送测试】生日快乐！',
           reminder: '还有 {days} 天是测试生日'
@@ -122,12 +147,12 @@ function readPushTestData(nowParts) {
       },
       {
         id: 9003,
-        type: 'bill',
+        type: 'custom',
         name: '【测试】今日缴费',
         category: 'test',
         enabled: true,
         remind_ahead: 0,
-        schedule: { mode: 'monthly', day },
+        schedule: { mode: 'monthly', day, time },
         messages: {
           today: '📄 【推送测试】今天要缴费',
           reminder: '还有 {days} 天缴费'
@@ -135,13 +160,20 @@ function readPushTestData(nowParts) {
       },
       {
         id: 9004,
-        type: 'health',
-        name: '【测试】每日运动',
+        type: 'period',
+        name: '【测试】经期',
         category: 'test',
         enabled: true,
         remind_ahead: 0,
-        schedule: { mode: 'daily' },
-        messages: { default: '🏃 【推送测试】起来活动一下（Server酱/飞书）' }
+        schedule: {
+          mode: 'cycle',
+          cycle_length: 28,
+          period_length: 5,
+          last_start: `${n.year || new Date().getFullYear()}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+          cycle_history: [`${n.year || new Date().getFullYear()}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`],
+          time
+        },
+        messages: { day_1: '🩸 【推送测试】经期第1天' }
       }
     ],
     history: []

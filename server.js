@@ -1,9 +1,40 @@
-﻿const express = require('express');
+const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
+const fs = require('fs');
+
+/** 本地开发：读取项目根目录 .env（不覆盖已有 process.env） */
+(function loadLocalEnv() {
+  try {
+    const envPath = path.join(__dirname, '.env');
+    if (!fs.existsSync(envPath)) return;
+    const text = fs.readFileSync(envPath, 'utf8').replace(/^\uFEFF/, '');
+    for (const line of text.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const i = trimmed.indexOf('=');
+      if (i <= 0) continue;
+      const key = trimmed.slice(0, i).trim();
+      let val = trimmed.slice(i + 1).trim();
+      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+        val = val.slice(1, -1);
+      }
+      if (process.env[key] === undefined) process.env[key] = val;
+    }
+  } catch {
+    /* ignore */
+  }
+})();
+
 const store = require('./store');
+const engine = require('./engine');
+const digest = require('./digest');
+const ledger = require('./ledger');
+const feishuBot = require('./feishu-bot');
 
 const PORT = process.env.PORT || 3333;
+const APP_URL = process.env.APP_URL || 'https://reminder-three-gamma.vercel.app';
+const BRAND = { name: 'Nudge', tagline: '轻推一下，刚好想起' };
 
 const {
   loadData,
@@ -11,10 +42,26 @@ const {
   loadConfig,
   saveConfig,
   persistenceInfo,
-  DATA_FILE,
   readPushTestData,
   readSeedData
 } = store;
+
+const {
+  TYPE_META,
+  migrateEvents,
+  migrateEvent,
+  checkEvent,
+  buildRecommendations,
+  collectDueItems,
+  buildFeishuCard,
+  buildServerchanBody,
+  normalizeEventInput,
+  logPeriodStart,
+  parseHHMM,
+  plannedTimeLabel,
+  isAcked,
+  ackEvent
+} = engine;
 
 let cachedTimezone = 'Asia/Shanghai';
 
@@ -73,142 +120,6 @@ function verifyToken(token) {
   }
 }
 
-// ─── 检查引擎 ───────────────────────────────────────
-const TYPE_META = {
-  birthday:    { label: '🎂 生日',      modes: ['yearly'] },
-  anniversary: { label: '💑 纪念日',    modes: ['yearly'] },
-  period:      { label: '🩸 经期',      modes: ['cycle'] },
-  medicine:    { label: '💊 吃药',      modes: ['daily'] },
-  bill:        { label: '📄 缴费',      modes: ['monthly'] },
-  health:      { label: '🏃 健康',      modes: ['daily','weekly'] },
-  festival:    { label: '🎉 节日',      modes: ['yearly'] },
-  checkup:     { label: '🏥 体检',      modes: ['yearly'] },
-  custom:      { label: '📌 自定义',    modes: ['daily','weekly','monthly','yearly'] },
-};
-
-function checkEvent(ev, _now) {
-  const n = _now || now();
-  const sched = ev.schedule || {};
-  const mode = sched.mode || 'yearly';
-  const ahead = ev.remind_ahead || 0;
-  const msg = ev.messages || {};
-  const today = dateStr();
-
-  if (!ev.enabled) return null;
-
-  if (mode === 'daily') {
-    return { active: true, message: msg.default || `⏰ ${ev.name} — 该行动了`, urgent: true, days: 0, name: ev.name, type: ev.type };
-  }
-
-  if (mode === 'weekly') {
-    const dayOfWeek = sched.day_of_week;
-    const d = new Date(n.year, n.month-1, n.day);
-    const dow = d.getDay();
-    if (dayOfWeek !== undefined && dow === dayOfWeek) {
-      return { active: true, message: msg.default || `📅 ${ev.name} — 今天是提醒日`, urgent: true, days: 0, name: ev.name, type: ev.type };
-    }
-    return null;
-  }
-
-  if (mode === 'monthly' || mode === 'yearly') {
-    const month = mode === 'monthly' ? n.month : (sched.month || 1);
-    const targetDay = new Date(n.year, month - 1, sched.day || 1);
-    let diff = Math.floor((targetDay - new Date(n.year, n.month-1, n.day)) / 86400000);
-    if (mode === 'yearly' && diff < 0) {
-      targetDay.setFullYear(n.year + 1);
-      diff = Math.floor((targetDay - new Date(n.year, n.month-1, n.day)) / 86400000);
-    }
-    if (mode === 'monthly' && diff < 0) {
-      targetDay.setMonth(n.month); // next month
-      diff = Math.floor((targetDay - new Date(n.year, n.month-1, n.day)) / 86400000);
-    }
-    const daysStr = diff.toString();
-    if (diff === 0) {
-      const m = msg.today ? msg.today.replace(/\{days\}/g, daysStr).replace(/\{name\}/g, ev.name) : `${TYPE_META[ev.type]?.label||'📌'} ${ev.name} — 就是今天！`;
-      return { active: true, message: m, urgent: true, days: 0, name: ev.name, type: ev.type };
-    }
-    if (diff > 0 && diff <= ahead) {
-      const m = msg.reminder ? msg.reminder.replace(/\{days\}/g, daysStr).replace(/\{name\}/g, ev.name) : `${TYPE_META[ev.type]?.label||'📌'} ${ev.name} — 还有 ${diff} 天`;
-      return { active: true, message: m, urgent: false, days: diff, name: ev.name, type: ev.type };
-    }
-    return null;
-  }
-
-  if (mode === 'cycle') {
-    // 周期（经期）模式
-    const cycleLen = sched.cycle_length || 28;
-    const periodLen = sched.period_length || 5;
-    const lastStart = sched.last_start ? new Date(sched.last_start) : null;
-    if (!lastStart) return null;
-    const nowDate = new Date(n.year, n.month-1, n.day);
-    const daysSince = Math.floor((nowDate - lastStart) / 86400000);
-    const dayInCycle = daysSince % cycleLen;
-
-    if (dayInCycle < periodLen) {
-      const key = `day_${dayInCycle + 1}`;
-      return { active: true, message: msg[key] || `🩸 经期第${dayInCycle+1}天`, urgent: true, days: 0, cycleDay: dayInCycle+1, name: ev.name, type: ev.type };
-    }
-    if (dayInCycle >= cycleLen - 14 - 3 && dayInCycle <= cycleLen - 14 + 3) {
-      return { active: true, message: msg.ovulation || '🥚 排卵期', urgent: false, days: 0, cycleDay: dayInCycle+1, name: ev.name, type: ev.type };
-    }
-    const preDays = sched.remind_ahead_cycle || 3;
-    if (cycleLen - dayInCycle <= preDays) {
-      return { active: true, message: msg.pre || `🩸 经期快到了（还有${cycleLen - dayInCycle}天）`, urgent: false, days: cycleLen - dayInCycle, cycleDay: dayInCycle+1, name: ev.name, type: ev.type };
-    }
-    return null;
-  }
-
-  return null;
-}
-
-// ─── 推荐引擎 ───────────────────────────────────────
-function getRecommendations(data) {
-  const recs = [];
-  const n = now();
-  const nowDate = new Date(n.year, n.month-1, n.day);
-
-  for (const ev of (data.events || [])) {
-    if (!ev.enabled) continue;
-    const sched = ev.schedule || {};
-
-    if (ev.type === 'period' && sched.mode === 'cycle') {
-      const lastStart = sched.last_start ? new Date(sched.last_start) : null;
-      if (lastStart) {
-        const cycleLen = sched.cycle_length || 28;
-        const daysSince = Math.floor((nowDate - lastStart) / 86400000);
-        const dayInCycle = daysSince % cycleLen;
-        const daysToNext = cycleLen - dayInCycle;
-        if (daysToNext <= 5 && daysToNext > 0) {
-          recs.push({ type: 'period', name: ev.name, message: '🩸 经期快到了，记得准备暖宝宝', priority: 1 });
-        }
-      }
-    }
-
-    if ((ev.type === 'birthday' || ev.type === 'anniversary') && sched.mode === 'yearly') {
-      const target = new Date(n.year, (sched.month||1)-1, (sched.day||1));
-      let diff = Math.floor((target - nowDate) / 86400000);
-      if (diff < 0) { target.setFullYear(n.year + 1); diff = Math.floor((target - nowDate) / 86400000); }
-      if (diff <= 7 && diff >= 0) {
-        recs.push({ type: ev.type, name: ev.name, message: `🎁 还有 ${diff} 天${ev.type==='birthday'?'生日':'纪念日'}，可以开始准备啦`, priority: 2 });
-      }
-    }
-
-    if (ev.type === 'health') {
-      recs.push({ type: 'health', name: ev.name, message: `🏃 每天记得 ${ev.name}，坚持就是胜利`, priority: 3 });
-    }
-
-    if (ev.type === 'bill' && sched.mode === 'monthly') {
-      const target = new Date(n.year, n.month, (sched.day||1));
-      let diff = Math.floor((target - nowDate) / 86400000);
-      if (diff <= 5 && diff >= 0) {
-        recs.push({ type: 'bill', name: ev.name, message: `💰 ${ev.name} 还有 ${diff} 天，记得预算`, priority: 2 });
-      }
-    }
-  }
-
-  return recs.sort((a, b) => a.priority - b.priority);
-}
-
 // ─── 推送 ────────────────────────────────────────────
 async function sendFeishuCard(config, cardBody) {
   if (!config.feishu?.enabled || !config.feishu?.webhook_url) return { ok: false, error: '飞书未配置' };
@@ -246,17 +157,51 @@ async function sendServerchan(config, title, content) {
   }
 }
 
-function buildFeishuCard(dateStr, items, title) {
-  const lines = items.map(i => `• ${i.message}`);
+function attachAckUrls(items, day) {
+  const d = day || dateStr();
+  return (items || []).map((i) => {
+    if (!i.eventId) return i;
+    return {
+      ...i,
+      ackUrl: `${APP_URL}/api/ack/${i.eventId}?date=${encodeURIComponent(d)}&via=feishu`
+    };
+  });
+}
+
+async function pushReminderBundle(config, items, title) {
+  const out = { feishu: null, serverchan: null };
+  if (!items.length) return out;
+  const brand = config.brand?.name || BRAND.name;
+  const enriched = attachAckUrls(items);
+  if (config.feishu?.enabled && config.feishu?.webhook_url) {
+    out.feishu = await sendFeishuCard(config, buildFeishuCard(dateStr(), enriched, title, APP_URL, brand));
+  } else {
+    out.feishu = { ok: false, error: '飞书未配置' };
+  }
+  if (config.serverchan?.enabled && config.serverchan?.sendkey) {
+    out.serverchan = await sendServerchan(config, title || `${brand} · ${dateStr()}`, buildServerchanBody(dateStr(), enriched));
+  } else {
+    out.serverchan = { ok: false, error: 'Server酱未配置' };
+  }
+  return out;
+}
+
+function publicConfig(config) {
   return {
-    msg_type: 'interactive',
-    card: {
-      header: { title: { tag: 'plain_text', content: title || `📅 ${dateStr} 提醒` }, color: 'blue' },
-      elements: [
-        { tag: 'markdown', content: `**📌 今日提醒**\n${lines.join('\n')}` },
-        { tag: 'hr' },
-        { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📋 查看' }, type: 'primary', multi_url: { url: `http://localhost:${PORT}` } }] }
-      ]
+    feishu: {
+      ...(config.feishu || {}),
+      bot_configured: feishuBot.botConfigured()
+    },
+    serverchan: config.serverchan,
+    check_times: config.check_times,
+    default_push_time: config.default_push_time,
+    timezone: config.timezone,
+    digests: config.digests,
+    brand: { ...BRAND, ...(config.brand || {}) },
+    deepseek: {
+      configured: !!process.env.DEEPSEEK_API_KEY,
+      enabled: config.deepseek?.enabled !== false,
+      model: config.deepseek?.model || 'deepseek-chat'
     }
   };
 }
@@ -268,8 +213,11 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // 认证中间件（HMAC 签名 Token，跨进程/冷启动有效）
 function authMiddleware(req, res, next) {
-  const bypassExact = new Set(['/api/login', '/api/health', '/api/check', '/api/cron/check']);
+  const bypassExact = new Set(['/api/login', '/api/health', '/api/check', '/api/cron/check', '/api/feishu/event']);
   if (bypassExact.has(req.path)) return next();
+  // Vercel / 代理下 path 可能变形
+  if (String(req.path || '').includes('feishu/event')) return next();
+  if (req.path.startsWith('/api/ack/')) return next();
   if (!req.path.startsWith('/api/')) return next();
   const token = req.headers.authorization?.replace(/^Bearer\s+/i, '');
   const user = verifyToken(token);
@@ -297,7 +245,7 @@ app.post('/api/login', async (req, res) => {
 app.get('/api/events', async (req, res) => {
   try {
     const data = await loadData();
-    res.json(data.events);
+    res.json(migrateEvents(data.events));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -306,8 +254,9 @@ app.get('/api/events', async (req, res) => {
 app.post('/api/events', async (req, res) => {
   try {
     const data = await loadData();
-    const ev = { id: nextId(data.events), ...req.body, enabled: req.body.enabled !== false };
-    if (!ev.type || !ev.name) return res.status(400).json({ error: 'type 和 name 必填' });
+    const normalized = normalizeEventInput(req.body || {});
+    if (!normalized.name) return res.status(400).json({ error: 'name 必填' });
+    const ev = { id: nextId(data.events), ...normalized };
     data.events.push(ev);
     data.history.push({ id: nextId(data.history), eventId: ev.id, action: 'create', detail: `${ev.type}:${ev.name}`, date: dateStr(), ts: Date.now() });
     await saveData(data);
@@ -322,8 +271,25 @@ app.put('/api/events/:id', async (req, res) => {
     const data = await loadData();
     const idx = data.events.findIndex(e => e.id === parseInt(req.params.id));
     if (idx === -1) return res.status(404).json({ error: '未找到' });
-    data.events[idx] = { ...data.events[idx], ...req.body, id: data.events[idx].id };
+    const merged = { ...data.events[idx], ...req.body, id: data.events[idx].id };
+    const normalized = normalizeEventInput(merged);
+    data.events[idx] = { ...merged, ...normalized, id: data.events[idx].id, enabled: merged.enabled !== false };
     data.history.push({ id: nextId(data.history), eventId: data.events[idx].id, action: 'update', detail: `${data.events[idx].type}:${data.events[idx].name}`, date: dateStr(), ts: Date.now() });
+    await saveData(data);
+    res.json(data.events[idx]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/events/:id/period-log', async (req, res) => {
+  try {
+    const data = await loadData();
+    const idx = data.events.findIndex(e => e.id === parseInt(req.params.id));
+    if (idx === -1) return res.status(404).json({ error: '未找到' });
+    const start = (req.body && req.body.start) || dateStr();
+    data.events[idx] = logPeriodStart(migrateEvent(data.events[idx]), start);
+    data.history.push({ id: nextId(data.history), eventId: data.events[idx].id, action: 'period-log', detail: `start:${start}`, date: dateStr(), ts: Date.now() });
     await saveData(data);
     res.json(data.events[idx]);
   } catch (e) {
@@ -361,18 +327,74 @@ app.get('/api/dashboard', async (req, res) => {
   try {
     const data = await loadData();
     const n = now();
-    const today = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.days === 0);
-    const upcoming = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && (r.days || 0) > 0 && (r.days || 99) <= 7);
-    res.json({ date: dateStr(), today, upcoming: upcoming.sort((a,b) => (a.days||99) - (b.days||99)) });
+    const todayStr = dateStr();
+    const events = migrateEvents(data.events);
+    const pending = [];
+    const done = [];
+    const upcoming = [];
+    for (const ev of events) {
+      if (!ev.enabled) continue;
+      const r = checkEvent(ev, n);
+      if (!r || !r.active) continue;
+      const row = { ...r, eventId: ev.id, space: ev.space, time: ev.schedule?.time || null, name: ev.name };
+      if (r.days === 0 || r.cycleDay !== undefined) {
+        if (isAcked(ev, todayStr)) done.push({ ...row, acked: true, ack: ev.acks[todayStr] });
+        else pending.push({ ...row, acked: false });
+      } else if ((r.days || 0) > 0 && (r.days || 99) <= 7) {
+        upcoming.push(row);
+      }
+    }
+    upcoming.sort((a, b) => (a.days || 99) - (b.days || 99));
+    res.json({
+      date: todayStr,
+      pending,
+      done,
+      today: pending,
+      upcoming,
+      brand: BRAND
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/events/:id/ack', async (req, res) => {
+  try {
+    const data = await loadData();
+    const id = parseInt(req.params.id, 10);
+    const idx = data.events.findIndex((e) => e.id === id);
+    if (idx === -1) return res.status(404).json({ error: '未找到' });
+    const day = (req.body && req.body.date) || dateStr();
+    const via = (req.body && req.body.via) || 'app';
+    data.events[idx] = ackEvent(data.events[idx], day, via);
+    await saveData(data);
+    res.json({ ok: true, item: migrateEvent(data.events[idx]), date: day });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** 飞书深链：/?ack=ID 打开后前端调用；也支持 GET 直接确认 */
+app.get('/api/ack/:id', async (req, res) => {
+  try {
+    const data = await loadData();
+    const id = parseInt(req.params.id, 10);
+    const idx = data.events.findIndex((e) => e.id === id);
+    if (idx === -1) return res.status(404).send('未找到事项');
+    const day = req.query.date || dateStr();
+    data.events[idx] = ackEvent(data.events[idx], day, req.query.via || 'feishu');
+    await saveData(data);
+    const redirect = `${APP_URL}/?acked=${id}&d=${day}`;
+    res.redirect(302, redirect);
+  } catch (e) {
+    res.status(500).send(e.message);
   }
 });
 
 app.get('/api/stats', async (req, res) => {
   try {
     const data = await loadData();
-    const events = data.events;
+    const events = migrateEvents(data.events);
     const total = events.length;
     const enabled = events.filter(e => e.enabled).length;
     const byType = {};
@@ -391,10 +413,28 @@ app.get('/api/stats', async (req, res) => {
 app.get('/api/recommend', async (req, res) => {
   try {
     const data = await loadData();
-    res.json(getRecommendations(data));
+    const config = await loadConfig();
+    const n = now();
+    const tips = buildRecommendations(data.events, n);
+    const dig = await digest.getDigestBundle(config, dateStr());
+    res.json({ tips, digests: dig });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+app.get('/api/digests', async (req, res) => {
+  try {
+    const config = await loadConfig();
+    const dig = await digest.getDigestBundle(config, dateStr());
+    res.json(dig);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/meta/types', (req, res) => {
+  res.json(TYPE_META);
 });
 
 app.get('/api/history', async (req, res) => {
@@ -424,7 +464,7 @@ app.get('/api/config', async (req, res) => {
   try {
     const config = await loadConfig();
     cachedTimezone = config.timezone || cachedTimezone;
-    res.json(config);
+    res.json(publicConfig(config));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -433,10 +473,21 @@ app.get('/api/config', async (req, res) => {
 app.put('/api/config', async (req, res) => {
   try {
     const config = await loadConfig();
-    const updated = { ...config, ...req.body };
+    const body = { ...(req.body || {}) };
+    delete body.users;
+    delete body.deepseek;
+    const updated = {
+      ...config,
+      ...body,
+      users: config.users,
+      feishu: { ...config.feishu, ...(body.feishu || {}) },
+      serverchan: { ...config.serverchan, ...(body.serverchan || {}) },
+      digests: { ...config.digests, ...(body.digests || {}) },
+      brand: { ...BRAND, ...(config.brand || {}), ...(body.brand || {}) }
+    };
     const saved = await saveConfig(updated);
     cachedTimezone = saved.timezone || cachedTimezone;
-    res.json(saved);
+    res.json(publicConfig(saved));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -450,13 +501,87 @@ app.get('/api/health', async (req, res) => {
     res.json({
       status: 'ok',
       time: dateStr(),
-      version: '3.1.1',
+      version: '4.1.1',
+      brand: BRAND.name,
+      app_url: APP_URL,
+      deepseek: { configured: !!process.env.DEEPSEEK_API_KEY },
+      feishu_bot: { configured: feishuBot.botConfigured() },
       events: data.events.length,
       vercel: !!process.env.VERCEL,
       persistence: persist
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+async function listPendingToday() {
+  const data = await loadData();
+  const n = now();
+  const todayStr = dateStr();
+  const pending = [];
+  for (const raw of migrateEvents(data.events)) {
+    if (!raw.enabled || isAcked(raw, todayStr)) continue;
+    const r = checkEvent(raw, n);
+    if (!r || !r.active) continue;
+    if (r.days === 0 || r.cycleDay !== undefined) {
+      pending.push({ id: raw.id, name: raw.name, message: r.message });
+    }
+  }
+  return pending;
+}
+
+async function ackTodayFromBot(nameHint) {
+  const data = await loadData();
+  const n = now();
+  const todayStr = dateStr();
+  const pending = [];
+  for (const raw of migrateEvents(data.events)) {
+    if (!raw.enabled || isAcked(raw, todayStr)) continue;
+    const r = checkEvent(raw, n);
+    if (!r || !r.active) continue;
+    if (r.days === 0 || r.cycleDay !== undefined) pending.push(raw);
+  }
+  if (!pending.length) return { text: '今天没有待确认的事项，都搞定了。', count: 0 };
+
+  let targets = pending;
+  if (nameHint) {
+    const hit = pending.filter((e) => e.name.includes(nameHint) || nameHint.includes(e.name));
+    if (!hit.length) {
+      return {
+        text: `没找到叫「${nameHint}」的待确认事项。今日还有：${pending.map((e) => e.name).join('、')}。可直接回「收到」确认全部。`,
+        count: 0
+      };
+    }
+    targets = hit;
+  }
+
+  const ids = new Set(targets.map((e) => e.id));
+  data.events = data.events.map((e) => (ids.has(e.id) ? ackEvent(e, todayStr, 'feishu') : e));
+  await saveData(data);
+  const names = targets.map((e) => e.name).join('、');
+  return {
+    text: targets.length === pending.length && !nameHint
+      ? `好的，今日 ${targets.length} 件已确认：${names}`
+      : `已确认：${names}`,
+    count: targets.length,
+    names: targets.map((e) => e.name)
+  };
+}
+
+/** 飞书事件订阅（本地 / 回退路径；生产优先走 api/feishu-event.js） */
+app.post('/api/feishu/event', async (req, res) => {
+  try {
+    const body = req.body || {};
+    if (body.type === 'url_verification' || (body.challenge && !body.header && !body.event)) {
+      return res.status(200).json({ challenge: body.challenge });
+    }
+    const { handleFeishuHttp } = require('./feishu-event-http');
+    const result = await handleFeishuHttp(body);
+    res.status(result.http || 200).json(result.json || { ok: true });
+  } catch (e) {
+    console.error('[feishu/event]', e.message);
+    res.status(200).json({ ok: false, error: e.message });
   }
 });
 
@@ -513,7 +638,7 @@ app.post('/api/demo/clear', async (req, res) => {
   }
 });
 
-/** 用当前事件跑一遍检查引擎，并推送到已启用的飞书/Server酱 */
+/** 手动推送：事项卡与热点卡分开发（绝不合并） */
 app.post('/api/push/run', async (req, res) => {
   try {
     const data = await loadData();
@@ -533,58 +658,263 @@ app.post('/api/push/run', async (req, res) => {
       }
     };
     const n = now();
-    const todayItems = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.days === 0);
-    const upcomingItems = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.days !== undefined && r.days > 0 && r.days <= 7);
-    const allItems = [...todayItems, ...upcomingItems];
-    const out = { date: dateStr(), today: todayItems.length, upcoming: upcomingItems.length, feishu: null, serverchan: null };
-    if (!allItems.length) {
-      out.message = '当前没有可推送的提醒（请先「加载推送测试数据」）';
+    const due = collectDueItems(data.events, n, {
+      defaultTime: saved.default_push_time || '09:00',
+      ignoreTime: true,
+      skipAcked: true,
+      dateYmd: dateStr()
+    });
+    const channel = body.channel; // items | digest | both(default)
+    const wantItems = channel !== 'digest';
+    const wantDigest = channel !== 'items' && body.include_digest !== false && saved.digests?.enabled !== false;
+
+    let digestItems = [];
+    if (wantDigest) {
+      const dig = await digest.getDigestBundle(saved, dateStr());
+      digestItems = dig.pushItems || [];
+    }
+
+    const out = {
+      date: dateStr(),
+      today: due.today.length,
+      upcoming: due.upcoming.length,
+      digests: digestItems.length,
+      items_push: null,
+      digest_push: null,
+      feishu: null,
+      serverchan: null
+    };
+    if ((!wantItems || !due.all.length) && !digestItems.length) {
+      out.message = '当前没有可推送的提醒';
       return res.json(out);
     }
-    if (config.feishu?.enabled && config.feishu?.webhook_url) {
-      out.feishu = await sendFeishuCard(config, buildFeishuCard(dateStr(), allItems, '🔔 推送联调'));
-    } else {
-      out.feishu = { ok: false, error: '飞书未配置' };
+
+    let led = data.push_ledger || [];
+    if (wantItems && due.all.length) {
+      const title = body.title || `${BRAND.name} · 今日事项`;
+      const pushed = await pushReminderBundle(config, due.all, title);
+      out.items_push = pushed;
+      out.feishu = pushed.feishu;
+      out.serverchan = pushed.serverchan;
+      for (const item of due.all) {
+        const t = item.planned_time || 'manual';
+        for (const ch of ['feishu', 'serverchan']) {
+          const result = pushed[ch];
+          if (!result) continue;
+          const key = ledger.makeDedupeKey(item.eventId, dateStr(), `manual-${t}`, ch);
+          led = ledger.appendLedger(led, {
+            item_id: item.eventId,
+            channel: ch,
+            planned_at: `${dateStr()}T${t}:00`,
+            status: result.ok ? 'success' : 'failed',
+            dedupe_key: key,
+            card_preview: item.message,
+            error: result.ok ? null : (result.error || 'failed')
+          });
+        }
+      }
     }
-    if (config.serverchan?.enabled && config.serverchan?.sendkey) {
-      const title = `📅 ${dateStr()} 推送联调`;
-      const content = allItems.map(i => `- ${i.message}`).join('\n');
-      out.serverchan = await sendServerchan(config, title, content);
-    } else {
-      out.serverchan = { ok: false, error: 'Server酱未配置' };
+    if (digestItems.length) {
+      const digTitle = `${BRAND.name} · 每日热点`;
+      const digPushed = await pushReminderBundle(config, digestItems, digTitle);
+      out.digest_push = digPushed;
+      if (!out.feishu) out.feishu = digPushed.feishu;
+      if (!out.serverchan) out.serverchan = digPushed.serverchan;
+      const digTime = saved.digests?.push_time || '20:00';
+      led = ledger.appendLedger(led, {
+        item_id: 0,
+        channel: 'feishu',
+        planned_at: `${dateStr()}T${digTime}:00`,
+        status: digPushed.feishu?.ok ? 'success' : 'failed',
+        dedupe_key: ledger.makeDedupeKey(0, dateStr(), `manual-digest-${digTime}`, 'digest'),
+        card_preview: 'digest',
+        error: digPushed.feishu?.ok ? null : (digPushed.feishu?.error || null)
+      });
     }
+    await saveData({ ...data, push_ledger: led });
     res.json(out);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// ─── Cron 定时检查（供 cron-job.org 调用）────────────
+// ─── 调度推送：事项通道 A + 热点通道 B（绝不合并）──
+async function runScheduledPush() {
+  const data = await loadData();
+  const config = await loadConfig();
+  cachedTimezone = config.timezone || cachedTimezone;
+  const n = now();
+  const defaultTime = config.default_push_time || '09:00';
+  const due = collectDueItems(data.events, n, {
+    defaultTime,
+    ignoreTime: false,
+    catchUp: true,
+    skipAcked: true,
+    dateYmd: dateStr()
+  });
+  let led = data.push_ledger || [];
+  const toPush = [];
+  for (const item of due.all) {
+    const t = item.planned_time || plannedTimeLabel({ schedule: { time: defaultTime } }, defaultTime);
+    const keyFs = ledger.makeDedupeKey(item.eventId, dateStr(), t, 'feishu');
+    const keySc = ledger.makeDedupeKey(item.eventId, dateStr(), t, 'serverchan');
+    const needFs = config.feishu?.enabled && !ledger.hasSuccessfulPush(led, keyFs);
+    const needSc = config.serverchan?.enabled && !ledger.hasSuccessfulPush(led, keySc);
+    if (needFs || needSc) toPush.push({ ...item, _t: t, needFs, needSc, keyFs, keySc });
+  }
+
+  let digestItems = [];
+  const digTime = parseHHMM(config.digests?.push_time || '20:00') || { hour: 20, minute: 0 };
+  const digLabel = `${String(digTime.hour).padStart(2, '0')}:${String(digTime.minute).padStart(2, '0')}`;
+  const digNow = n.hour * 60 + n.minute;
+  const digPlanned = digTime.hour * 60 + digTime.minute;
+  const digKey = ledger.makeDedupeKey(0, dateStr(), digLabel, 'digest');
+  if (config.digests?.enabled !== false && digNow >= digPlanned && !ledger.hasSuccessfulPush(led, digKey)) {
+    const dig = await digest.getDigestBundle(config, dateStr());
+    digestItems = dig.pushItems || [];
+  }
+
+  const results = {
+    date: dateStr(),
+    hour: n.hour,
+    minute: n.minute,
+    candidates: due.all.length,
+    toPush: toPush.length,
+    digests: digestItems.length,
+    pushed: false,
+    items_pushed: false,
+    digest_pushed: false,
+    feishu_enabled: !!config.feishu?.enabled,
+    serverchan_enabled: !!config.serverchan?.enabled
+  };
+  if (toPush.length === 0 && digestItems.length === 0) {
+    return { ...results, message: 'no due reminders (or already sent / channels off)' };
+  }
+
+  if (toPush.length) {
+    const title = `${BRAND.name} · 今日事项`;
+    const pushed = await pushReminderBundle(config, toPush, title);
+    results.feishu = pushed.feishu;
+    results.serverchan = pushed.serverchan;
+    results.items_pushed = !!(pushed.feishu?.ok || pushed.serverchan?.ok);
+    results.pushed = results.pushed || results.items_pushed;
+    for (const item of toPush) {
+      if (item.needFs) {
+        led = ledger.appendLedger(led, {
+          item_id: item.eventId,
+          channel: 'feishu',
+          planned_at: `${dateStr()}T${item._t}:00`,
+          status: pushed.feishu?.ok ? 'success' : 'failed',
+          dedupe_key: item.keyFs,
+          card_preview: item.message,
+          error: pushed.feishu?.ok ? null : (pushed.feishu?.error || null)
+        });
+      }
+      if (item.needSc) {
+        led = ledger.appendLedger(led, {
+          item_id: item.eventId,
+          channel: 'serverchan',
+          planned_at: `${dateStr()}T${item._t}:00`,
+          status: pushed.serverchan?.ok ? 'success' : 'failed',
+          dedupe_key: item.keySc,
+          card_preview: item.message,
+          error: pushed.serverchan?.ok ? null : (pushed.serverchan?.error || null)
+        });
+      }
+    }
+  }
+
+  if (digestItems.length) {
+    const digTitle = `${BRAND.name} · 每日热点`;
+    const digPushed = await pushReminderBundle(config, digestItems, digTitle);
+    results.digest_feishu = digPushed.feishu;
+    results.digest_pushed = !!digPushed.feishu?.ok;
+    results.pushed = results.pushed || results.digest_pushed;
+    led = ledger.appendLedger(led, {
+      item_id: 0,
+      channel: 'feishu',
+      planned_at: `${dateStr()}T${digLabel}:00`,
+      status: digPushed.feishu?.ok ? 'success' : 'failed',
+      dedupe_key: digKey,
+      card_preview: 'digest',
+      error: digPushed.feishu?.ok ? null : (digPushed.feishu?.error || null)
+    });
+  }
+
+  await saveData({ ...data, push_ledger: led });
+  return results;
+}
+
 app.get('/api/cron/check', async (req, res) => {
   try {
+    res.json(await runScheduledPush());
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/events/batch-delete', async (req, res) => {
+  try {
+    const ids = (req.body && req.body.ids) || [];
+    if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids 必填' });
+    const set = new Set(ids.map((x) => parseInt(x, 10)).filter(Number.isFinite));
     const data = await loadData();
-    const config = await loadConfig();
-    cachedTimezone = config.timezone || cachedTimezone;
+    const before = data.events.length;
+    const removed = data.events.filter((e) => set.has(e.id));
+    data.events = data.events.filter((e) => !set.has(e.id));
+    for (const ev of removed) {
+      data.history.push({ id: nextId(data.history), eventId: ev.id, action: 'delete', detail: `batch:${ev.type}:${ev.name}`, date: dateStr(), ts: Date.now() });
+    }
+    await saveData(data);
+    res.json({ ok: true, deleted: before - data.events.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/events/batch-category', async (req, res) => {
+  try {
+    const ids = (req.body && req.body.ids) || [];
+    const category = req.body?.category === 'temporary' ? 'temporary' : 'long_term';
+    const space = category === 'temporary' ? 'task' : 'habit';
+    if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids 必填' });
+    const set = new Set(ids.map((x) => parseInt(x, 10)).filter(Number.isFinite));
+    const data = await loadData();
+    let n = 0;
+    data.events = data.events.map((e) => {
+      if (!set.has(e.id)) return e;
+      n += 1;
+      const next = migrateEvent({ ...e, category, space: e.space === 'moment' ? 'moment' : space });
+      return next;
+    });
+    await saveData(data);
+    res.json({ ok: true, updated: n, category });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/ledger', async (req, res) => {
+  try {
+    const data = await loadData();
+    const itemId = req.query.item_id != null ? parseInt(req.query.item_id, 10) : null;
+    if (Number.isFinite(itemId)) return res.json(ledger.listByItem(data.push_ledger, itemId));
+    res.json(ledger.listToday(data.push_ledger, dateStr()));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/events/:id/detail', async (req, res) => {
+  try {
+    const data = await loadData();
+    const id = parseInt(req.params.id, 10);
+    const ev = migrateEvents(data.events).find((e) => e.id === id);
+    if (!ev) return res.status(404).json({ error: '未找到' });
     const n = now();
-    const todayItems = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.days === 0);
-    const upcomingItems = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.days !== undefined && r.days > 0 && r.days <= 7);
-    const cycleItems = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.cycleDay !== undefined);
-    const allItems = [...todayItems, ...upcomingItems, ...cycleItems];
-    const results = { date: dateStr(), today: todayItems.length, upcoming: upcomingItems.length, pushed: false };
-    if (allItems.length === 0) { return res.json({ ...results, message: 'no reminders' }); }
-    try {
-      if (config.feishu?.enabled) {
-        const card = buildFeishuCard(dateStr(), allItems);
-        await sendFeishuCard(config, card);
-      }
-      if (config.serverchan?.enabled) {
-        const title = `📅 ${dateStr()} 日常提醒`;
-        const content = allItems.map(i => `- ${i.message}`).join('\n');
-        await sendServerchan(config, title, content);
-      }
-      results.pushed = true;
-    } catch (e) { results.error = e.message; }
-    res.json(results);
+    const check = checkEvent(ev, n);
+    const history = ledger.listByItem(data.push_ledger, id);
+    res.json({ item: ev, check, push_history: history, brand: BRAND });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -607,7 +937,13 @@ app.post('/api/feishu/test', async (req, res) => {
       saved.feishu = config.feishu;
       await saveConfig(saved);
     }
-    const card = buildFeishuCard(dateStr(), [{ message: '✅ 这是一条测试消息' }], '🔔 提醒系统测试');
+    const card = buildFeishuCard(
+      dateStr(),
+      [{ message: 'Webhook 可用。此消息不是任何事项提醒。', type: 'custom' }],
+      '【连通性测试】非事项提醒',
+      APP_URL,
+      BRAND.name
+    );
     const result = await sendFeishuCard(config, card);
     res.json(result);
   } catch (e) {
@@ -642,7 +978,7 @@ app.post('/api/feishu/send-card', async (req, res) => {
   try {
     const config = await loadConfig();
     const { title, items } = req.body || {};
-    const card = buildFeishuCard(dateStr(), items || [], title);
+    const card = buildFeishuCard(dateStr(), items || [], title, APP_URL);
     const result = await sendFeishuCard(config, card);
     res.json(result);
   } catch (e) {
@@ -664,16 +1000,26 @@ if (require.main === module && !process.env.VERCEL) {
       const data = await loadData();
       cachedTimezone = cfg.timezone || cachedTimezone;
       const persist = persistenceInfo();
-      console.log(`☀️ 日常提醒系统 v3.1 已启动`);
+      console.log(`✨ Nudge v4.0 已启动`);
       console.log(`   📍 http://0.0.0.0:${PORT}`);
       console.log(`   ⏰ 时区: ${cachedTimezone}`);
       console.log(`   📊 事件数: ${data.events.length}`);
       console.log(`   💾 存储: ${persist.backend}${persist.durable ? '' : ' (非持久)'}`);
+      console.log(`   ⏱️  本地调度: 每 60s 扫描到期事项（飞书需在设置中启用）`);
     } catch (e) {
-      console.log(`☀️ 日常提醒系统 v3.1 已启动`);
+      console.log(`✨ Nudge v4.0 已启动`);
       console.log(`   📍 http://0.0.0.0:${PORT}`);
       console.log(`   ⚠️  存储初始化: ${e.message}`);
     }
+    // 本地开发：没有 Vercel Cron，必须自跑调度
+    setInterval(() => {
+      runScheduledPush().then((r) => {
+        if (r.pushed) console.log(`[scheduler] pushed toPush=${r.toPush} digests=${r.digests}`);
+      }).catch((e) => console.error('[scheduler]', e.message));
+    }, 60 * 1000);
+    setTimeout(() => {
+      runScheduledPush().catch(() => {});
+    }, 3000);
   });
 }
 

@@ -2,15 +2,47 @@
   "version": 2,
   "builds": [
     {
+      "src": "api/feishu-event.js",
+      "use": "@vercel/node",
+      "config": {
+        "includeFiles": [
+          "feishu-bot.js",
+          "feishu-event-http.js",
+          "store.js",
+          "engine.js",
+          "digest.js",
+          "ledger.js",
+          "sql/**"
+        ]
+      }
+    },
+    {
       "src": "api/index.js",
       "use": "@vercel/node",
       "config": {
-        "includeFiles": ["seed.data.json", "store.js", "sql/**", "public/**"]
+        "includeFiles": [
+          "seed.data.json",
+          "store.js",
+          "engine.js",
+          "digest.js",
+          "ledger.js",
+          "feishu-bot.js",
+          "feishu-event-http.js",
+          "sql/**",
+          "public/**"
+        ]
       }
     }
   ],
   "routes": [
+    { "src": "/api/feishu/event", "dest": "/api/feishu-event.js" },
     { "src": "/api/(.*)", "dest": "/api/index.js" },
     { "src": "/(.*)", "dest": "/api/index.js" }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/check",
+      "schedule": "*/5 * * * *"
+    }
   ]
 }
