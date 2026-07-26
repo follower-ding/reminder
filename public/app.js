@@ -606,26 +606,26 @@ async function renderSubscribe(el) {
     <div class="source-grid">
       <div class="nudge-card source-card digest-card">
         <div class="toggle-row">
-          <div><div class="title">GitHub 热门</div><div class="desc">近期高星仓库</div></div>
+          <div><div class="title">GitHub 热门</div><div class="desc">飞书详版：仓库 / 一句话 / 为什么看 / 链接</div></div>
           <div class="toggle ${d.github?.enabled !== false ? "on" : ""}" id="tog-gh"></div>
         </div>
-        <div class="toggle-row"><span class="form-hint">本源 AI 导读</span><div class="toggle ${d.github?.ai !== false ? "on" : ""}" id="tog-gh-ai"></div></div>
+        <div class="toggle-row"><span class="form-hint">AI 导读+为什么</span><div class="toggle ${d.github?.ai !== false ? "on" : ""}" id="tog-gh-ai"></div></div>
         <div class="form-group"><label>本源时刻（可空=用默认）</label><input id="gh-time" type="time" value="${esc(ghTime)}"></div>
       </div>
       <div class="nudge-card source-card digest-card">
         <div class="toggle-row">
-          <div><div class="title">科技快讯</div><div class="desc">Hacker News 等 RSS</div></div>
+          <div><div class="title">科技快讯</div><div class="desc">飞书详版：标题 / 导读 / 为什么刷 / 原文</div></div>
           <div class="toggle ${d.news?.enabled !== false ? "on" : ""}" id="tog-news"></div>
         </div>
-        <div class="toggle-row"><span class="form-hint">本源 AI 导读</span><div class="toggle ${d.news?.ai !== false ? "on" : ""}" id="tog-news-ai"></div></div>
+        <div class="toggle-row"><span class="form-hint">AI 导读+为什么</span><div class="toggle ${d.news?.ai !== false ? "on" : ""}" id="tog-news-ai"></div></div>
         <div class="form-group"><label>本源时刻（可空=用默认）</label><input id="news-time" type="time" value="${esc(newsTime)}"></div>
       </div>
       <div class="nudge-card source-card digest-card">
         <div class="toggle-row">
-          <div><div class="title">学习推荐</div><div class="desc">主题轮换</div></div>
+          <div><div class="title">每日编程</div><div class="desc">飞书详版：课题 / 讲解 / 例子 / 练习</div></div>
           <div class="toggle ${d.learning?.enabled !== false ? "on" : ""}" id="tog-learn"></div>
         </div>
-        <div class="toggle-row"><span class="form-hint">本源 AI 导读</span><div class="toggle ${d.learning?.ai !== false ? "on" : ""}" id="tog-learn-ai"></div></div>
+        <div class="toggle-row"><span class="form-hint">AI 扩写讲解</span><div class="toggle ${d.learning?.ai !== false ? "on" : ""}" id="tog-learn-ai"></div></div>
         <div class="form-group"><label>本源时刻（可空=用默认）</label><input id="learn-time" type="time" value="${esc(learnTime)}"></div>
       </div>
     </div>

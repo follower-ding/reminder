@@ -37,6 +37,6 @@ describe('digest split + ai flags', () => {
     assert.equal(bundle.sections.length, 1);
     assert.equal(bundle.sections[0].id, 'learning');
     assert.ok(bundle.sections[0].pushItems.length >= 1);
-    assert.match(bundle.sections[0].pushItems[0].message, /学习|番茄/);
+    assert.match(bundle.sections[0].pushItems[0].message, /今日课题|是什么|动手/);
   });
 });
