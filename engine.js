@@ -116,6 +116,52 @@ function buildAckUrl(appUrl, eventId, dateYmd, via, secret) {
   return `${base}/api/ack/${parseInt(eventId, 10)}/${date}/${encodeURIComponent(sig)}/${v}`;
 }
 
+/** 飞书卡片按钮回调 value（不跳转网页） */
+function buildAckValue(eventId, dateYmd, secret) {
+  const date = String(dateYmd).slice(0, 10);
+  const id = String(parseInt(eventId, 10));
+  return {
+    action: 'ack',
+    id,
+    date,
+    sig: createAckSig(id, date, secret)
+  };
+}
+
+function buildAckedCard(dateLabel, names, brandName, appUrl) {
+  const brand = brandName || 'Nudge';
+  const url = appUrl || process.env.APP_URL || 'https://reminder-three-gamma.vercel.app';
+  const list = Array.isArray(names) ? names.filter(Boolean) : [names].filter(Boolean);
+  const label = list.length ? list.join('、') : '事项';
+  return {
+    header: {
+      title: { tag: 'plain_text', content: `${brand} · 已确认` },
+      template: 'green'
+    },
+    elements: [
+      {
+        tag: 'div',
+        text: {
+          tag: 'lark_md',
+          content: `✅ **已在飞书确认** · ${dateLabel}\n\n${label}\n\n无需打开网页。误点可在清单里撤销今日确认。`
+        }
+      },
+      { tag: 'hr' },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '打开清单' },
+            type: 'default',
+            multi_url: { url, android_url: url, ios_url: url, pc_url: url }
+          }
+        ]
+      }
+    ]
+  };
+}
+
 /**
  * 确认收到。待办（task）确认后归档停用，习惯/日子仅写 acks。
  */
@@ -489,7 +535,8 @@ function isRichDigestFormat(fmt) {
 function formatItemLine(x) {
   const msg = x.message || x.name || '事项';
   if (isRichDigestFormat(x.format)) return msg;
-  if (x.ackUrl) return `• ${msg}  [已收到](${x.ackUrl})`;
+  // 确认走卡片按钮回调，正文不再放跳转链接
+  if (x.eventId || x.ackValue || x.ackUrl) return `• ${msg}`;
   return `• ${msg}`;
 }
 
@@ -553,31 +600,34 @@ function buildFeishuCard(dateLabel, items, title, appUrl, brandName) {
     ? ''
     : isDigest
       ? '\n\n——\n有问题可私聊 Nudge 机器人'
-      : '\n\n——\n点事项旁 **已收到** 或卡片按钮确认；也可私聊机器人回「收到」';
+      : '\n\n——\n点下方 **已收到** 按钮即可确认（不离开飞书）；也可私聊回「收到」';
 
-  const ackItems = (items || []).filter((i) => i.ackUrl && i.eventId);
+  const ackItems = (items || []).filter((i) => i.eventId && (i.ackValue || i.ackUrl));
   const actionRows = [];
   if (!isTest && !isDigest && ackItems.length) {
-    // 飞书单行最多约 3 个按钮
+    // 飞书单行最多约 3 个按钮；用 callback，不跳转网页
     for (let i = 0; i < Math.min(ackItems.length, 6); i += 2) {
       const slice = ackItems.slice(i, i + 2);
       actionRows.push({
         tag: 'action',
-        actions: slice.map((it) => ({
-          tag: 'button',
-          text: {
-            tag: 'plain_text',
-            content: `已收到 · ${(it.name || '事项').slice(0, 8)}`
-          },
-          type: 'primary',
-          url: it.ackUrl,
-          multi_url: {
-            url: it.ackUrl,
-            android_url: it.ackUrl,
-            ios_url: it.ackUrl,
-            pc_url: it.ackUrl
-          }
-        }))
+        actions: slice.map((it) => {
+          const value = it.ackValue || {
+            action: 'ack',
+            id: String(it.eventId),
+            date: String(dateLabel).slice(0, 10),
+            url: it.ackUrl || ''
+          };
+          return {
+            tag: 'button',
+            text: {
+              tag: 'plain_text',
+              content: `已收到 · ${(it.name || '事项').slice(0, 8)}`
+            },
+            type: 'primary',
+            value,
+            behaviors: [{ type: 'callback', value }]
+          };
+        })
       });
     }
   }
@@ -699,5 +749,7 @@ module.exports = {
   unackEvent,
   createAckSig,
   verifyAckSig,
-  buildAckUrl
+  buildAckUrl,
+  buildAckValue,
+  buildAckedCard
 };

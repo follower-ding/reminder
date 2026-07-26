@@ -5,7 +5,10 @@
  * 用法：
  *   FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx npm run feishu:ws
  *
- * 飞书后台：事件与回调 → 订阅方式选「使用长连接接收事件」→ 先本进程连上再保存
+ * 飞书后台：
+ *   事件与回调 → 订阅方式选「使用长连接接收事件」
+ *   添加事件：im.message.receive_v1
+ *   添加回调：card.action.trigger（卡片「已收到」按钮）
  */
 const path = require('path');
 const fs = require('fs');
@@ -33,7 +36,7 @@ const fs = require('fs');
 })();
 
 const Lark = require('@larksuiteoapi/node-sdk');
-const { handleFeishuHttp } = require('./feishu-event-http');
+const { handleFeishuHttp, handleCardAction } = require('./feishu-event-http');
 
 const appId = process.env.FEISHU_APP_ID;
 const appSecret = process.env.FEISHU_APP_SECRET;
@@ -63,13 +66,33 @@ async function onReceiveMessage(data) {
   }
 }
 
+/** 卡片按钮回调：handler 的 return 会回传给飞书（toast / 更新卡片） */
+async function onCardAction(data) {
+  try {
+    const result = await handleCardAction(data);
+    console.log('[feishu-ws] card action', result?.toast?.content || 'ok');
+    return result;
+  } catch (e) {
+    console.error('[feishu-ws] card action error', e.message);
+    return {
+      toast: {
+        type: 'error',
+        content: e.message || '确认失败',
+        i18n: { zh_cn: e.message || '确认失败' }
+      }
+    };
+  }
+}
+
 console.log('[feishu-ws] connecting… appId=', appId.slice(0, 8) + '…');
-console.log('[feishu-ws] 连上后：飞书控制台 → 事件订阅 →「使用长连接接收事件」→ 保存');
-console.log('[feishu-ws] 并添加事件：im.message.receive_v1');
+console.log('[feishu-ws] 连上后：飞书控制台 → 事件订阅 →「使用长连接」');
+console.log('[feishu-ws] 事件：im.message.receive_v1');
+console.log('[feishu-ws] 回调：card.action.trigger（已收到按钮）');
 
 wsClient.start({
   eventDispatcher: new Lark.EventDispatcher({}).register({
-    'im.message.receive_v1': onReceiveMessage
+    'im.message.receive_v1': onReceiveMessage,
+    'card.action.trigger': onCardAction
   })
 });
 

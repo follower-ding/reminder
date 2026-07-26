@@ -65,6 +65,7 @@ const {
   ackEvent,
   unackEvent,
   buildAckUrl,
+  buildAckValue,
   verifyAckSig
 } = engine;
 
@@ -207,6 +208,8 @@ function attachAckUrls(items, day) {
     if (!i.eventId) return i;
     return {
       ...i,
+      ackValue: buildAckValue(i.eventId, d, TOKEN_SECRET),
+      // 保留深链仅作兼容；飞书卡片按钮已改为 callback，不再跳转
       ackUrl: buildAckUrl(APP_URL, i.eventId, d, 'feishu', TOKEN_SECRET)
     };
   });
@@ -643,7 +646,7 @@ app.get('/api/health', async (req, res) => {
     res.json({
       status: 'ok',
       time: dateStr(),
-      version: '4.1.19',
+      version: '4.1.20',
       brand: BRAND.name,
       app_url: APP_URL,
       deepseek: { configured: !!process.env.DEEPSEEK_API_KEY },

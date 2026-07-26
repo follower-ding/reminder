@@ -227,7 +227,7 @@ async function renderToday(el) {
     if (!feishuOn) {
       hint = `<div class="hint-banner" id="feishu-hint">要收到推送，请到「设置」打开飞书 Webhook。<button type="button" class="hint-dismiss" data-dismiss-hint aria-label="关闭提示">关闭</button></div>`;
     } else {
-      hint = `<div class="hint-banner soft" id="feishu-hint">在飞书回复或点卡片「已收到」确认；问答可私聊机器人。误点可在下方已确认里撤销。<button type="button" class="hint-dismiss" data-dismiss-hint aria-label="关闭提示">知道了</button></div>`;
+      hint = `<div class="hint-banner soft" id="feishu-hint">在飞书点卡片「已收到」按钮即可确认（不跳转网页）；也可回「收到」。误点可在下方撤销。<button type="button" class="hint-dismiss" data-dismiss-hint aria-label="关闭提示">知道了</button></div>`;
     }
   }
 
