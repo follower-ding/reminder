@@ -3,42 +3,32 @@
   "functions": {
     "api/feishu-event-edge.js": {
       "runtime": "edge"
+    },
+    "api/feishu-event-node.js": {
+      "includeFiles": [
+        "feishu-bot.js",
+        "feishu-event-http.js",
+        "store.js",
+        "engine.js",
+        "digest.js",
+        "ledger.js",
+        "sql/**"
+      ]
+    },
+    "api/index.js": {
+      "includeFiles": [
+        "seed.data.json",
+        "store.js",
+        "engine.js",
+        "digest.js",
+        "ledger.js",
+        "feishu-bot.js",
+        "feishu-event-http.js",
+        "sql/**",
+        "public/**"
+      ]
     }
   },
-  "builds": [
-    {
-      "src": "api/feishu-event-node.js",
-      "use": "@vercel/node",
-      "config": {
-        "includeFiles": [
-          "feishu-bot.js",
-          "feishu-event-http.js",
-          "store.js",
-          "engine.js",
-          "digest.js",
-          "ledger.js",
-          "sql/**"
-        ]
-      }
-    },
-    {
-      "src": "api/index.js",
-      "use": "@vercel/node",
-      "config": {
-        "includeFiles": [
-          "seed.data.json",
-          "store.js",
-          "engine.js",
-          "digest.js",
-          "ledger.js",
-          "feishu-bot.js",
-          "feishu-event-http.js",
-          "sql/**",
-          "public/**"
-        ]
-      }
-    }
-  ],
   "routes": [
     { "src": "/api/feishu/event/node", "dest": "/api/feishu-event-node.js" },
     { "src": "/api/feishu/event", "dest": "/api/feishu-event-edge.js" },
