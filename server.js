@@ -385,8 +385,9 @@ app.get('*', (req, res) => {
 
 // ─── 启动 ────────────────────────────────────────────
 app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`☀️ 日常提醒系统 v3.0 已启动`);
-  console.log(`   📍 http://localhost:${PORT}`);
+  console.log(`   📍 http://0.0.0.0:${PORT}`);
   console.log(`   ⏰ 时区: ${(readJSON(CONFIG_FILE).timezone || 'Asia/Shanghai')}`);
   console.log(`   📊 事件数: ${(readJSON(DATA_FILE).events || []).length}`);
 });
