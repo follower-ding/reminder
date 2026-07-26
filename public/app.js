@@ -432,6 +432,69 @@ function eventCard(ev) {
   </article>`;
 }
 
+function periodPhaseLabel(f) {
+  if (!f) return "待记录";
+  if (f.overdue) return "可能推迟";
+  if (f.in_period) return `经期中 · 第 ${f.day_in_cycle} 天`;
+  if (f.in_ovulation) return "易孕期附近";
+  return "周期中";
+}
+
+function periodConfidenceLabel(level) {
+  return ({ high: "较高", medium: "中等", low: "偏低" })[level] || "偏低";
+}
+
+function periodForecastHTML(period) {
+  if (!period) return "";
+  const f = period.forecast;
+  const hist = period.history || [];
+  if (!f) {
+    return `
+      <div class="nudge-card span-2 period-forecast">
+        <div class="section-title"><h3>预测</h3></div>
+        <p class="form-hint">还没有经期开始记录。点「今天开始了」记一次后，即可预测下次日期。</p>
+      </div>`;
+  }
+  const nextShort = String(f.next_start || "").slice(5);
+  const daysHint = f.days_to_next === 0 ? "就是今天" : `还有 ${f.days_to_next} 天`;
+  const histRows = hist.length
+    ? hist.map((h) => `
+        <div class="period-hist-row">
+          <span>${esc(h.start)}</span>
+          <span class="form-hint">${h.gap_days != null ? `间隔 ${h.gap_days} 天` : "起始记录"}</span>
+        </div>`).join("")
+    : `<p class="form-hint">暂无历史。每次点「今天开始了」会记一笔。</p>`;
+  return `
+    <div class="nudge-card span-2 period-forecast">
+      <div class="section-title">
+        <h3>预测</h3>
+        <span class="badge ${f.confidence === "high" ? "ok" : ""}">可信度 ${periodConfidenceLabel(f.confidence)}</span>
+      </div>
+      <div class="forecast-grid">
+        <div class="forecast-cell">
+          <div class="label">下次预计</div>
+          <div class="num">${esc(nextShort || "—")}</div>
+          <div class="hint">${esc(daysHint)}</div>
+        </div>
+        <div class="forecast-cell">
+          <div class="label">平均周期</div>
+          <div class="num">${esc(String(f.cycle_length || 28))}</div>
+          <div class="hint">天 · 经期约 ${esc(String(f.period_length || 5))} 天</div>
+        </div>
+        <div class="forecast-cell">
+          <div class="label">当前阶段</div>
+          <div class="num phase">${esc(periodPhaseLabel(f))}</div>
+          <div class="hint">波动约 ±${esc(String(f.variance || 3))} 天</div>
+        </div>
+      </div>
+      <p class="form-hint" style="margin-top:.75rem">基于 ${esc(String(f.history_count || 0))} 次记录；多记几次「今天开始了」会更准。</p>
+    </div>
+    <div class="nudge-card">
+      <div class="section-title"><h3>最近记录</h3></div>
+      ${histRows}
+    </div>`;
+}
+
 async function renderDetail(el, id) {
   el.innerHTML = `<div class="empty-state"><p>加载中…</p></div>`;
   const res = await api("/events/" + id + "/detail");
@@ -448,6 +511,7 @@ async function renderDetail(el, id) {
       ${res.check ? `<p class="detail-msg">${esc(res.check.message)}</p>` : `<p class="form-hint" style="margin-top:.55rem">当前未到触发条件</p>`}
     </div>
     <div class="card-grid">
+      ${ev.type === "period" ? periodForecastHTML(res.period) : ""}
       <div class="nudge-card">
         <div class="section-title"><h3>操作</h3></div>
         <div class="action-btns">

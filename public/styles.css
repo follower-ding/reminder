@@ -353,6 +353,29 @@ h1,h2,h3 { font-family: var(--font-d); font-weight: 600; letter-spacing: -.02em;
 .detail-hero.birthday { background: linear-gradient(145deg, rgba(234,88,12,.1), #fff); }
 .detail-hero h2 { font-size: 1.6rem; margin: .35rem 0; }
 
+.period-forecast .forecast-grid {
+  display: grid; grid-template-columns: 1fr; gap: .65rem;
+}
+@media (min-width: 640px) {
+  .period-forecast .forecast-grid { grid-template-columns: repeat(3, 1fr); }
+}
+.forecast-cell {
+  border: 1px solid var(--line); border-radius: 14px; padding: .75rem .8rem;
+  background: linear-gradient(160deg, rgba(190,18,60,.05), #fff);
+}
+.forecast-cell .label { font-size: .72rem; color: var(--muted); letter-spacing: .02em; }
+.forecast-cell .num {
+  font-family: var(--font-d); font-size: 1.45rem; font-weight: 650; color: var(--rose);
+  margin: .2rem 0 .1rem; line-height: 1.2;
+}
+.forecast-cell .num.phase { font-size: 1.15rem; }
+.forecast-cell .hint { font-size: .78rem; color: var(--muted); }
+.period-hist-row {
+  display: flex; justify-content: space-between; gap: .75rem; align-items: baseline;
+  padding: .45rem 0; border-bottom: 1px solid var(--line); font-size: .92rem;
+}
+.period-hist-row:last-child { border-bottom: 0; }
+
 .timeline-item { display: grid; grid-template-columns: 12px 1fr; gap: .65rem; padding: .55rem 0; border-bottom: 1px solid var(--line); }
 .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: .35rem; background: var(--teal); }
 .dot.ok { background: #059669; }
