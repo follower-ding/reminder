@@ -111,12 +111,9 @@ function buildAckUrl(appUrl, eventId, dateYmd, via, secret) {
   const base = String(appUrl || process.env.APP_URL || 'https://reminder-three-gamma.vercel.app').replace(/\/$/, '');
   const date = String(dateYmd).slice(0, 10);
   const sig = createAckSig(eventId, date, secret);
-  const q = new URLSearchParams({
-    date,
-    via: via || 'feishu',
-    sig
-  });
-  return `${base}/api/ack/${parseInt(eventId, 10)}?${q.toString()}`;
+  const v = encodeURIComponent(via || 'feishu');
+  // 路径型深链（无 ?a=&b=）：飞书 Markdown/部分客户端会截断 & 导致丢 sig、只打开首页
+  return `${base}/api/ack/${parseInt(eventId, 10)}/${date}/${encodeURIComponent(sig)}/${v}`;
 }
 
 /**
@@ -538,6 +535,7 @@ function buildFeishuCard(dateLabel, items, title, appUrl, brandName) {
             content: `已收到 · ${(it.name || '事项').slice(0, 8)}`
           },
           type: 'primary',
+          url: it.ackUrl,
           multi_url: {
             url: it.ackUrl,
             android_url: it.ackUrl,
