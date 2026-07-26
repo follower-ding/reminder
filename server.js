@@ -643,7 +643,7 @@ app.get('/api/health', async (req, res) => {
     res.json({
       status: 'ok',
       time: dateStr(),
-      version: '4.1.14',
+      version: '4.1.16',
       brand: BRAND.name,
       app_url: APP_URL,
       deepseek: { configured: !!process.env.DEEPSEEK_API_KEY },
@@ -810,23 +810,26 @@ app.post('/api/push/run', async (req, res) => {
     const wantItems = channel !== 'digest';
     const wantDigest = channel !== 'items' && body.include_digest !== false && saved.digests?.enabled !== false;
 
-    let digestItems = [];
+    let digestSections = [];
     if (wantDigest) {
+      digest.clearDigestCache();
       const dig = await digest.getDigestBundle(saved, dateStr());
-      digestItems = dig.pushItems || [];
+      digestSections = (dig.sections || []).filter((s) => s.pushItems?.length);
     }
 
     const out = {
       date: dateStr(),
       today: due.today.length,
       upcoming: due.upcoming.length,
-      digests: digestItems.length,
+      digests: digestSections.reduce((n, s) => n + (s.pushItems?.length || 0), 0),
+      digest_sources: digestSections.map((s) => s.id),
       items_push: null,
       digest_push: null,
+      digest_pushes: [],
       feishu: null,
       serverchan: null
     };
-    if ((!wantItems || !due.all.length) && !digestItems.length) {
+    if ((!wantItems || !due.all.length) && !digestSections.length) {
       out.message = '当前没有可推送的提醒';
       return res.json(out);
     }
@@ -856,20 +859,21 @@ app.post('/api/push/run', async (req, res) => {
         }
       }
     }
-    if (digestItems.length) {
-      const digTitle = `${BRAND.name} · 每日热点`;
-      const digPushed = await pushReminderBundle(config, digestItems, digTitle);
-      out.digest_push = digPushed;
+    for (const sec of digestSections) {
+      const digTitle = `${BRAND.name} · ${sec.title}`;
+      const digPushed = await pushReminderBundle(config, sec.pushItems, digTitle);
+      out.digest_pushes.push({ source: sec.id, title: digTitle, ...digPushed });
+      if (!out.digest_push) out.digest_push = digPushed;
       if (!out.feishu) out.feishu = digPushed.feishu;
       if (!out.serverchan) out.serverchan = digPushed.serverchan;
-      const digTime = saved.digests?.push_time || '20:00';
+      const digTime = sec.push_time || saved.digests?.push_time || '20:00';
       led = ledger.appendLedger(led, {
         item_id: 0,
-        channel: 'feishu',
+        channel: `digest-${sec.id}`,
         planned_at: `${dateStr()}T${digTime}:00`,
         status: digPushed.feishu?.ok ? 'success' : 'failed',
-        dedupe_key: ledger.makeDedupeKey(0, dateStr(), `manual-digest-${digTime}`, 'digest'),
-        card_preview: 'digest',
+        dedupe_key: ledger.makeDedupeKey(0, dateStr(), `manual-${digTime}`, `digest-${sec.id}`),
+        card_preview: digTitle,
         error: digPushed.feishu?.ok ? null : (digPushed.feishu?.error || null)
       });
     }
@@ -905,15 +909,16 @@ async function runScheduledPush() {
     if (needFs || needSc) toPush.push({ ...item, _t: t, needFs, needSc, keyFs, keySc });
   }
 
-  let digestItems = [];
-  const digTime = parseHHMM(config.digests?.push_time || '20:00') || { hour: 20, minute: 0 };
-  const digLabel = `${String(digTime.hour).padStart(2, '0')}:${String(digTime.minute).padStart(2, '0')}`;
-  const digNow = n.hour * 60 + n.minute;
-  const digPlanned = digTime.hour * 60 + digTime.minute;
-  const digKey = ledger.makeDedupeKey(0, dateStr(), digLabel, 'digest');
-  if (config.digests?.enabled !== false && digNow >= digPlanned && !ledger.hasSuccessfulPush(led, digKey)) {
-    const dig = await digest.getDigestBundle(config, dateStr());
-    digestItems = dig.pushItems || [];
+  const dueDigestSources = [];
+  if (config.digests?.enabled !== false) {
+    const dueSecs = await digest.getDueDigestSources(config, dateStr(), n);
+    for (const sec of dueSecs) {
+      const digLabel = sec.push_time || config.digests?.push_time || '20:00';
+      const digKey = ledger.makeDedupeKey(0, dateStr(), digLabel, `digest-${sec.id}`);
+      if (!ledger.hasSuccessfulPush(led, digKey)) {
+        dueDigestSources.push({ ...sec, _t: digLabel, digKey });
+      }
+    }
   }
 
   const results = {
@@ -922,14 +927,15 @@ async function runScheduledPush() {
     minute: n.minute,
     candidates: due.all.length,
     toPush: toPush.length,
-    digests: digestItems.length,
+    digests: dueDigestSources.reduce((n, s) => n + (s.pushItems?.length || 0), 0),
+    digest_sources: dueDigestSources.map((s) => s.id),
     pushed: false,
     items_pushed: false,
     digest_pushed: false,
     feishu_enabled: !!config.feishu?.enabled,
     serverchan_enabled: !!config.serverchan?.enabled
   };
-  if (toPush.length === 0 && digestItems.length === 0) {
+  if (toPush.length === 0 && dueDigestSources.length === 0) {
     return { ...results, message: 'no due reminders (or already sent / channels off)' };
   }
 
@@ -966,19 +972,22 @@ async function runScheduledPush() {
     }
   }
 
-  if (digestItems.length) {
-    const digTitle = `${BRAND.name} · 每日热点`;
-    const digPushed = await pushReminderBundle(config, digestItems, digTitle);
+  results.digest_pushes = [];
+  for (const sec of dueDigestSources) {
+    const digTitle = `${BRAND.name} · ${sec.title}`;
+    const digPushed = await pushReminderBundle(config, sec.pushItems, digTitle);
+    results.digest_pushes.push({ source: sec.id, ok: !!digPushed.feishu?.ok });
     results.digest_feishu = digPushed.feishu;
-    results.digest_pushed = !!digPushed.feishu?.ok;
-    results.pushed = results.pushed || results.digest_pushed;
+    results.digest_pushed = results.digest_pushed || !!digPushed.feishu?.ok;
+    results.pushed = results.pushed || !!digPushed.feishu?.ok;
+    if (!results.feishu) results.feishu = digPushed.feishu;
     led = ledger.appendLedger(led, {
       item_id: 0,
-      channel: 'feishu',
-      planned_at: `${dateStr()}T${digLabel}:00`,
+      channel: `digest-${sec.id}`,
+      planned_at: `${dateStr()}T${sec._t}:00`,
       status: digPushed.feishu?.ok ? 'success' : 'failed',
-      dedupe_key: digKey,
-      card_preview: 'digest',
+      dedupe_key: sec.digKey,
+      card_preview: digTitle,
       error: digPushed.feishu?.ok ? null : (digPushed.feishu?.error || null)
     });
   }

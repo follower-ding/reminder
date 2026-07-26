@@ -23,15 +23,10 @@ const DEFAULT_CONFIG = {
   digests: {
     enabled: true,
     push_time: '20:00',
-    github: { enabled: true },
-    news: { enabled: true, feeds: ['https://hnrss.org/frontpage'] },
-    learning: { enabled: true, topics: ['前端', '算法', '英语', '写作'] },
-    sources: {
-      github_trending: { enabled: true },
-      ai_news: { enabled: false, feeds: [] },
-      hn_frontpage: { enabled: true },
-      custom_rss: { enabled: false, feeds: [] }
-    }
+    ai_summary: true,
+    github: { enabled: true, push_time: '', ai: true },
+    news: { enabled: true, push_time: '', ai: true, feeds: ['https://hnrss.org/frontpage'] },
+    learning: { enabled: true, push_time: '', ai: true, topics: ['前端', '算法', '英语', '写作'] }
   },
   users: { admin: { password: 'admin123', label: '管理员' } }
 };
