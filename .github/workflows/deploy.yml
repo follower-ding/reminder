@@ -13,15 +13,21 @@ jobs:
 
       - name: 打包部署产物
         run: |
-          tar -czf reminder-deploy.tgz \
-            --exclude=./.git \
-            --exclude=./node_modules \
-            --exclude=./.env \
-            --exclude=./config.json \
-            --exclude=./data.json \
-            --exclude=./.playwright-mcp \
-            --exclude=./reminder-deploy.tgz \
-            .
+          set +e
+          tar -czf /tmp/reminder-deploy.tgz \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='.env' \
+            --exclude='config.json' \
+            --exclude='data.json' \
+            --exclude='.playwright-mcp' \
+            -C "$GITHUB_WORKSPACE" .
+          status=$?
+          set -e
+          # tar exit 1 = file changed while reading（可忽略）；>=2 才失败
+          if [ "$status" -gt 1 ]; then exit "$status"; fi
+          mv /tmp/reminder-deploy.tgz "$GITHUB_WORKSPACE/reminder-deploy.tgz"
+          ls -lh reminder-deploy.tgz
 
       - name: 同步到服务器
         uses: appleboy/scp-action@v0.1.7
