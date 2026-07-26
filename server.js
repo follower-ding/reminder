@@ -38,12 +38,13 @@ function writeJSON(file, data) {
 function now(date) {
   const d = date ? new Date(date) : new Date();
   const tz = (readJSON(CONFIG_FILE).timezone || 'Asia/Shanghai');
-  const opts = { timeZone: tz, hour12: false };
-  const parts = {};
-  for (const k of ['year','month','day','hour','minute']) {
-    parts[k] = parseInt(d.toLocaleString('en-CA', { ...opts, [k==='year'?'year':'numeric']: true, ...(k==='month'?{month:'2-digit'}:{}), ...(k==='day'?{day:'2-digit'}:{}), ...(k==='hour'?{hour:'2-digit'}:{}), ...(k==='minute'?{minute:'2-digit'}:{}) }).split(/[-\s:]/)[['year','month','day','hour','minute'].indexOf(k)], 10);
-  }
-  return parts;
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false
+  });
+  const p = fmt.formatToParts(d);
+  const g = (t) => parseInt(p.find(x => x.type === t)?.value || '0', 10);
+  return { year: g('year'), month: g('month'), day: g('day'), hour: g('hour'), minute: g('minute') };
 }
 function dateStr(date) {
   const d = now(date);
