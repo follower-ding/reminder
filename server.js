@@ -1,15 +1,23 @@
-const express = require('express');
+﻿const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
 // ─── 路径 ────────────────────────────────────────────
-const DATA_FILE = path.join(__dirname, 'data.json');
-const CONFIG_FILE = path.join(__dirname, 'config.json');
+const DATA_DIR = process.env.DATA_DIR || (process.env.VERCEL ? '/tmp' : __dirname);
+const DATA_FILE = path.join(DATA_DIR, 'data.json');
+const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 const PORT = process.env.PORT || 3333;
 
 // ─── 工具 ────────────────────────────────────────────
 function readJSON(file) {
+  // On Vercel, if file doesn't exist in DATA_DIR, copy from deployment source
+  if (process.env.VERCEL && !require('fs').existsSync(file)) {
+    const srcFile = path.join(__dirname, path.basename(file));
+    if (require('fs').existsSync(srcFile)) {
+      require('fs').copyFileSync(srcFile, file);
+    }
+  }
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
   catch { return {}; }
 }
@@ -355,6 +363,32 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: dateStr(), version: '3.0.0' });
 });
 
+// ─── Cron 定时检查（供 cron-job.org 调用）────────────
+app.get('/api/cron/check', async (req, res) => {
+  const data = readJSON(DATA_FILE);
+  const config = readJSON(CONFIG_FILE);
+  const n = now();
+  const todayItems = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.days === 0);
+  const upcomingItems = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.days !== undefined && r.days > 0 && r.days <= 7);
+  const cycleItems = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.cycleDay !== undefined);
+  const allItems = [...todayItems, ...upcomingItems, ...cycleItems];
+  const results = { date: dateStr(), today: todayItems.length, upcoming: upcomingItems.length, pushed: false };
+  if (allItems.length === 0) { return res.json({ ...results, message: 'no reminders' }); }
+  try {
+    if (config.feishu?.enabled) {
+      const card = buildFeishuCard(dateStr(), allItems);
+      await sendFeishuCard(config, card);
+    }
+    if (config.serverchan?.enabled) {
+      const title = `📅 ${dateStr()} 日常提醒`;
+      const content = allItems.map(i => `- ${i.message}`).join('\n');
+      await sendServerchan(config, title, content);
+    }
+    results.pushed = true;
+  } catch (e) { results.error = e.message; }
+  res.json(results);
+});
+ 
 // ─── 推送测试 ──────────────────────────────────────────
 app.post('/api/feishu/test', async (req, res) => {
   const config = readJSON(CONFIG_FILE);
@@ -384,10 +418,13 @@ app.get('*', (req, res) => {
 });
 
 // ─── 启动 ────────────────────────────────────────────
-app.listen(PORT, () => {
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`☀️ 日常提醒系统 v3.0 已启动`);
-  console.log(`   📍 http://0.0.0.0:${PORT}`);
-  console.log(`   ⏰ 时区: ${(readJSON(CONFIG_FILE).timezone || 'Asia/Shanghai')}`);
-  console.log(`   📊 事件数: ${(readJSON(DATA_FILE).events || []).length}`);
-});
+if (!process.env.VERCEL) {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`☀️ 日常提醒系统 v3.0 已启动`);
+    console.log(`   📍 http://0.0.0.0:${PORT}`);
+    console.log(`   ⏰ 时区: ${(readJSON(CONFIG_FILE).timezone || 'Asia/Shanghai')}`);
+    console.log(`   📊 事件数: ${(readJSON(DATA_FILE).events || []).length}`);
+  });
+}
+
+module.exports = app;
