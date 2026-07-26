@@ -1,0 +1,72 @@
+﻿[
+  {
+    "id": 1,
+    "type": "birthday",
+    "name": "妈妈",
+    "category": "family",
+    "enabled": true,
+    "remind_ahead": 3,
+    "schedule": { "mode": "yearly", "month": 8, "day": 15 },
+    "messages": { "reminder": "还有 {days} 天是妈妈的生日 🎂", "today": "🎂 妈妈生日快乐！" }
+  },
+  {
+    "id": 2,
+    "type": "anniversary",
+    "name": "结婚纪念日",
+    "category": "family",
+    "enabled": true,
+    "remind_ahead": 7,
+    "schedule": { "mode": "yearly", "month": 10, "day": 1 },
+    "messages": { "reminder": "还有 {days} 天结婚纪念日 💑", "today": "💑 结婚纪念日快乐！" }
+  },
+  {
+    "id": 3,
+    "type": "medicine",
+    "name": "吃维生素",
+    "category": "health",
+    "enabled": true,
+    "remind_ahead": 0,
+    "schedule": { "mode": "daily" },
+    "messages": { "default": "💊 该吃维生素了" }
+  },
+  {
+    "id": 4,
+    "type": "bill",
+    "name": "房租",
+    "category": "finance",
+    "enabled": true,
+    "remind_ahead": 3,
+    "schedule": { "mode": "monthly", "day": 1 },
+    "messages": { "reminder": "📄 还有 {days} 天交房租", "today": "📄 今天交房租" }
+  },
+  {
+    "id": 5,
+    "type": "health",
+    "name": "跑步",
+    "category": "health",
+    "enabled": true,
+    "remind_ahead": 0,
+    "schedule": { "mode": "daily" },
+    "messages": { "default": "🏃 今天跑步了吗？" }
+  },
+  {
+    "id": 6,
+    "type": "checkup",
+    "name": "年度体检",
+    "category": "health",
+    "enabled": true,
+    "remind_ahead": 7,
+    "schedule": { "mode": "yearly", "month": 12, "day": 15 },
+    "messages": { "reminder": "🏥 还有 {days} 天该体检了", "today": "🏥 今天体检，记得空腹" }
+  },
+  {
+    "id": 7,
+    "type": "custom",
+    "name": "倒垃圾",
+    "category": "household",
+    "enabled": true,
+    "remind_ahead": 0,
+    "schedule": { "mode": "weekly", "day_of_week": 2 },
+    "messages": { "default": "🗑 今天是收垃圾日" }
+  }
+]

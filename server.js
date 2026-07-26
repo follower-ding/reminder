@@ -21,7 +21,12 @@ function readJSON(file) {
       const def = { feishu: { enabled: false, webhook_url: '' }, serverchan: { enabled: false, sendkey: '' }, check_times: ['09:00','14:00','21:00'], timezone: 'Asia/Shanghai', users: { admin: { password: 'admin123', label: '管理员' } } };
       require('fs').writeFileSync(file, JSON.stringify(def, null, 2), 'utf8');
     } else if (path.basename(file) === 'data.json') {
-      require('fs').writeFileSync(file, '{"events":[],"history":[]}', 'utf8');
+      const seedFile = path.join(__dirname, 'seed.data.json');
+      if (require('fs').existsSync(seedFile)) {
+        require('fs').copyFileSync(seedFile, file);
+      } else {
+        require('fs').writeFileSync(file, '{"events":[],"history":[]}', 'utf8');
+      }
     }
   }
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
