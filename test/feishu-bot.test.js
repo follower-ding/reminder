@@ -1,6 +1,6 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { matchAckIntent, parseMessageText, handleEvent } = require('../feishu-bot');
+const { matchAckIntent, parseMessageText, stripMentions, handleEvent } = require('../feishu-bot');
 
 describe('feishu bot intents', () => {
   it('matches ack phrases', () => {
@@ -15,6 +15,23 @@ describe('feishu bot intents', () => {
       event: { message: { message_type: 'text', content: JSON.stringify({ text: '收到' }) } }
     });
     assert.equal(text, '收到');
+  });
+
+  it('strips @mention so group「@Nudge 收到」acks', () => {
+    const text = parseMessageText({
+      event: {
+        message: {
+          message_type: 'text',
+          content: JSON.stringify({ text: '@_user_1 收到' })
+        }
+      }
+    });
+    assert.equal(text, '收到');
+    assert.deepEqual(matchAckIntent(text), { intent: 'ack', nameHint: null });
+    assert.deepEqual(matchAckIntent(stripMentions('@Nudge 收到')), {
+      intent: 'ack',
+      nameHint: null
+    });
   });
 
   it('returns challenge for url verification', async () => {
