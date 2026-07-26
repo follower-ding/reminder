@@ -1,13 +1,16 @@
 /**
  * 每日热点：按来源分卡推送 + 可选 DeepSeek 导读。
  */
+const { buildDailyProgrammingLesson } = require('./digest-learning');
+const { buildSourceArticlePush } = require('./digest-articles');
+
 const cache = { key: '', at: 0, data: null };
 const CACHE_MS = 60 * 60 * 1000;
 
 const SOURCE_META = {
   github: { title: 'GitHub 热门', emoji: '🔥', defaultTime: '' },
   news: { title: '科技快讯', emoji: '📰', defaultTime: '' },
-  learning: { title: '学习推荐', emoji: '📚', defaultTime: '' }
+  learning: { title: '每日编程', emoji: '📚', defaultTime: '' }
 };
 
 async function fetchText(url, timeoutMs = 8000) {
@@ -75,24 +78,19 @@ async function fetchNews(feeds, limit = 5) {
   return out.slice(0, limit);
 }
 
+/** @deprecated 保留导出兼容；实际推送走 buildDailyProgrammingLesson */
 function learningTips(topics) {
-  const pool = Array.isArray(topics) && topics.length ? topics : ['前端', '算法', '英语', '写作'];
+  const pool = Array.isArray(topics) && topics.length ? topics : ['JavaScript', '算法', 'Git', 'HTTP'];
   const today = new Date().getDate();
   const topic = pool[today % pool.length];
   return [
     {
-      title: `今日学习 · ${topic}`,
-      desc: `花 25 分钟专注练习「${topic}」，完成后给自己打个勾`,
+      title: `今日课题 · ${topic}`,
+      desc: `围绕「${topic}」读完今日卡片里的讲解与练习即可`,
       url: '',
-      meta: '学习',
-      blurb: `今天聚焦「${topic}」：设定一个小目标，用一个番茄钟做完即可。`
-    },
-    {
-      title: '番茄钟提醒',
-      desc: '工作 25 分钟 + 休息 5 分钟，完成 2 轮即可',
-      url: '',
-      meta: '学习',
-      blurb: '别贪多：两轮番茄钟比刷一天视频更有效。'
+      meta: '编程',
+      blurb: `今天聚焦「${topic}」：先读「是什么 / 为什么」，再做动手题。`,
+      format: 'lesson'
     }
   ];
 }
@@ -144,7 +142,10 @@ async function summarizeWithAI(sourceTitle, items) {
   const list = (items || []).slice(0, 5);
   if (!list.length) return list;
   if (!key) {
-    return list.map((it) => ({ ...it, blurb: it.blurb || it.desc || '暂无导读（未配置 DEEPSEEK_API_KEY）' }));
+    return list.map((it) => ({
+      ...it,
+      blurb: it.blurb || it.desc || '暂无导读（未配置 DEEPSEEK_API_KEY）'
+    }));
   }
   const lines = list.map((it, i) => {
     const bits = [`${i + 1}. ${it.title}`];
@@ -163,12 +164,14 @@ async function summarizeWithAI(sourceTitle, items) {
       body: JSON.stringify({
         model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
         temperature: 0.4,
-        max_tokens: 600,
+        max_tokens: 900,
         messages: [
           {
             role: 'system',
             content:
-              '你是资讯编辑。为每条内容写一句中文导读（18～36字），说明为什么值得看。只返回 JSON 数组，长度与输入条数一致，元素为字符串，不要 markdown。'
+              '你是资讯编辑。为每条返回 JSON 数组，元素为对象 {"blurb":"...","why":"..."}。'
+              + 'blurb：18～36字中文一句话导读；why：28～48字说明为什么值得看/适合谁。'
+              + '数组长度与输入条数一致。不要 markdown，只 JSON。'
           },
           {
             role: 'user',
@@ -180,19 +183,27 @@ async function summarizeWithAI(sourceTitle, items) {
     const json = await res.json();
     const text = json.choices?.[0]?.message?.content?.trim() || '';
     const match = text.match(/\[[\s\S]*\]/);
-    const blurbs = match ? JSON.parse(match[0]) : null;
-    if (!Array.isArray(blurbs) || blurbs.length === 0) {
+    const rows = match ? JSON.parse(match[0]) : null;
+    if (!Array.isArray(rows) || rows.length === 0) {
       return list.map((it) => ({ ...it, blurb: it.blurb || it.desc || '' }));
     }
-    return list.map((it, i) => ({
-      ...it,
-      blurb: String(blurbs[i] || it.desc || '').trim().slice(0, 80)
-    }));
+    return list.map((it, i) => {
+      const row = rows[i];
+      if (typeof row === 'string') {
+        return { ...it, blurb: String(row).trim().slice(0, 80) };
+      }
+      return {
+        ...it,
+        blurb: String(row?.blurb || it.desc || '').trim().slice(0, 80),
+        why: String(row?.why || '').trim().slice(0, 120)
+      };
+    });
   } catch {
     return list.map((it) => ({ ...it, blurb: it.blurb || it.desc || '' }));
   }
 }
 
+/** @deprecated 旧扁平列表；现用详版 article 单卡 */
 function toPushItems(sourceId, emoji, items) {
   return (items || []).slice(0, 3).map((it) => {
     const blurb = it.blurb || it.desc || '';
@@ -211,28 +222,48 @@ function toPushItems(sourceId, emoji, items) {
   });
 }
 
-async function buildSourceSection(def, digests) {
-  const emoji = SOURCE_META[def.id]?.emoji || '•';
+async function buildSourceSection(def, digests, dateKey) {
   let items = [];
+  let pushItems = [];
   let error = null;
   try {
-    if (def.id === 'github') items = await fetchGitHubTrending(5);
-    else if (def.id === 'news') items = await fetchNews(def.feeds || digests.news?.feeds, 5);
-    else if (def.id === 'learning') items = learningTips(def.topics || digests.learning?.topics);
+    if (def.id === 'github') {
+      items = await fetchGitHubTrending(5);
+    } else if (def.id === 'news') {
+      items = await fetchNews(def.feeds || digests.news?.feeds, 5);
+    } else if (def.id === 'learning') {
+      const built = await buildDailyProgrammingLesson({
+        dateKey: dateKey || new Date().toISOString().slice(0, 10),
+        topics: def.topics || digests.learning?.topics,
+        useAI: !!def.ai
+      });
+      items = [built.item];
+      pushItems = [built.pushItem];
+    }
   } catch (e) {
     error = e.message;
     items = [];
+    pushItems = [];
   }
 
-  if (items.length && def.ai && def.id !== 'learning') {
-    items = await summarizeWithAI(def.title, items);
-  } else if (items.length && def.id === 'learning' && def.ai) {
-    /* learning already has blurbs; optional polish skipped for speed */
-  } else {
-    items = items.map((it) => ({ ...it, blurb: it.blurb || it.desc || '' }));
+  if (def.id === 'github' || def.id === 'news') {
+    if (items.length && def.ai) {
+      items = await summarizeWithAI(def.title, items);
+    } else {
+      items = items.map((it) => ({ ...it, blurb: it.blurb || it.desc || '' }));
+    }
+    if (items.length) {
+      const built = buildSourceArticlePush(
+        def.id,
+        items,
+        dateKey || new Date().toISOString().slice(0, 10)
+      );
+      pushItems = [built.pushItem];
+    } else {
+      pushItems = [];
+    }
   }
 
-  const pushItems = toPushItems(def.id, emoji, items);
   return {
     id: def.id,
     title: def.title,
@@ -264,7 +295,8 @@ async function getDigestBundle(config, dateKey, options = {}) {
   for (const def of defs) {
     const section = await buildSourceSection(
       { ...def, ai: withAI && def.ai },
-      digests
+      digests,
+      dateKey
     );
     sections.push(section);
   }

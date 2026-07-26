@@ -482,10 +482,32 @@ function collectDueItems(events, n, options = {}) {
   return { today, upcoming, all: [...today, ...upcoming] };
 }
 
+function isRichDigestFormat(fmt) {
+  return fmt === 'lesson' || fmt === 'article';
+}
+
 function formatItemLine(x) {
   const msg = x.message || x.name || '事项';
+  if (isRichDigestFormat(x.format)) return msg;
   if (x.ackUrl) return `• ${msg}  [已收到](${x.ackUrl})`;
   return `• ${msg}`;
+}
+
+function digestLeadLine(dateLabel, brand, title, groups) {
+  const t = String(title || '');
+  if (groups.digest.every((i) => i.format === 'lesson') || t.includes('编程')) {
+    return `✨ **${dateLabel}** · ${brand}\n今日编程精读（可直接在飞书读完）`;
+  }
+  if (t.includes('GitHub') || groups.digest.some((i) => i.source === 'github')) {
+    return `✨ **${dateLabel}** · ${brand}\n今日开源精选（可直接在飞书读完）`;
+  }
+  if (t.includes('快讯') || t.includes('科技') || groups.digest.some((i) => i.source === 'news')) {
+    return `✨ **${dateLabel}** · ${brand}\n今日科技精读（可直接在飞书读完）`;
+  }
+  if (groups.digest.every((i) => isRichDigestFormat(i.format))) {
+    return `✨ **${dateLabel}** · ${brand}\n今日精读（可直接在飞书读完）`;
+  }
+  return `✨ **${dateLabel}** · ${brand}\n今日热点精选`;
 }
 
 function buildFeishuCard(dateLabel, items, title, appUrl, brandName) {
@@ -502,6 +524,10 @@ function buildFeishuCard(dateLabel, items, title, appUrl, brandName) {
   const pushSection = (key, heading) => {
     const list = groups[key];
     if (!list.length) return;
+    if (key === 'digest' && list.every((i) => isRichDigestFormat(i.format))) {
+      sections.push(list.map((i) => i.message || '').join('\n\n'));
+      return;
+    }
     sections.push(`**${heading}**\n${list.map(formatItemLine).join('\n')}`);
   };
   pushSection('period', '经期与周期');
@@ -512,8 +538,17 @@ function buildFeishuCard(dateLabel, items, title, appUrl, brandName) {
 
   const body = sections.length ? sections.join('\n\n') : '• 暂无提醒';
   const isTest = String(title || '').includes('连通性测试');
-  const isDigest = String(title || '').includes('热点') || (groups.digest.length && !groups.custom.length && !groups.period.length && !groups.birthday.length);
+  const isRichDigest = groups.digest.length > 0
+    && groups.digest.every((i) => isRichDigestFormat(i.format));
+  const isDigest = String(title || '').includes('热点')
+    || String(title || '').includes('编程')
+    || String(title || '').includes('学习')
+    || String(title || '').includes('GitHub')
+    || String(title || '').includes('快讯')
+    || isRichDigest
+    || (groups.digest.length && !groups.custom.length && !groups.period.length && !groups.birthday.length);
   const headerColor = isTest ? 'grey' : isDigest ? 'orange' : groups.period.length ? 'carmine' : 'turquoise';
+  const digestLead = digestLeadLine(dateLabel, brand, title, groups);
   const footerHint = isTest
     ? ''
     : isDigest
@@ -573,7 +608,7 @@ function buildFeishuCard(dateLabel, items, title, appUrl, brandName) {
             content: isTest
               ? `⚠️ **这是连通性测试，不是事项提醒**\n仅验证 Webhook 是否可用。`
               : isDigest
-                ? `✨ **${dateLabel}** · ${brand}\n今日热点精选`
+                ? digestLead
                 : `📅 **${dateLabel}** · ${brand}\n轻推一下，刚好想起`
           }
         },

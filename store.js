@@ -26,7 +26,7 @@ const DEFAULT_CONFIG = {
     ai_summary: true,
     github: { enabled: true, push_time: '', ai: true },
     news: { enabled: true, push_time: '', ai: true, feeds: ['https://hnrss.org/frontpage'] },
-    learning: { enabled: true, push_time: '', ai: true, topics: ['前端', '算法', '英语', '写作'] }
+    learning: { enabled: true, push_time: '', ai: true, topics: ['前端', '算法', 'Git', 'HTTP'] }
   },
   users: { admin: { password: 'admin123', label: '管理员' } }
 };
