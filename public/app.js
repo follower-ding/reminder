@@ -5,10 +5,24 @@ let USER = JSON.parse(localStorage.getItem("user") || "null");
 
 function toast(msg) { TOAST.textContent = msg; TOAST.classList.add("show"); setTimeout(() => TOAST.classList.remove("show"), 2500); }
 
+function forceLogout(msg) {
+  TOKEN = ""; USER = null;
+  localStorage.removeItem("token"); localStorage.removeItem("user");
+  document.getElementById("app").style.display = "none";
+  document.getElementById("login-screen").style.display = "flex";
+  if (msg) toast(msg);
+}
+
 function api(path, opts = {}) {
   const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
   if (TOKEN) headers["Authorization"] = "Bearer " + TOKEN;
-  return fetch(API_BASE + path, { ...opts, headers }).then(r => r.json().catch(() => ({ error: r.statusText })));
+  return fetch(API_BASE + path, { ...opts, headers }).then(async r => {
+    const data = await r.json().catch(() => ({ error: r.statusText || "请求失败" }));
+    if (r.status === 401 && path !== "/login") {
+      forceLogout("登录已过期，请重新登录");
+    }
+    return data;
+  });
 }
 
 // Login
@@ -33,9 +47,7 @@ document.getElementById("login-pass").addEventListener("keydown", e => { if (e.k
 
 // Logout
 document.getElementById("logout-btn").addEventListener("click", () => {
-  TOKEN = ""; USER = null; localStorage.removeItem("token"); localStorage.removeItem("user");
-  document.getElementById("app").style.display = "none";
-  document.getElementById("login-screen").style.display = "flex";
+  forceLogout();
 });
 
 // Check token on load
@@ -94,6 +106,10 @@ function renderView(view) {
 async function renderDashboard(el) {
   el.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text2)">⏳ 加载中...</div>`;
   const [dashboard, stats] = await Promise.all([api("/dashboard"), api("/stats")]);
+  if (dashboard.error || stats.error) {
+    el.innerHTML = `<div class="empty-state"><div class="icon">⚠️</div><p>${dashboard.error || stats.error || "加载失败"}</p></div>`;
+    return;
+  }
   el.innerHTML = `
     <div class="card">
       <div class="card-header"><h2>📅 ${dashboard.date || "今天"}</h2></div>
@@ -126,6 +142,10 @@ function renderEventList(items, title) {
 async function renderEvents(el) {
   el.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text2)">⏳ 加载中...</div>`;
   const events = await api("/events");
+  if (!Array.isArray(events)) {
+    el.innerHTML = `<div class="empty-state"><div class="icon">⚠️</div><p>${events.error || "事件加载失败"}</p></div>`;
+    return;
+  }
   const enabled = events.filter(e => e.enabled);
   const disabled = events.filter(e => !e.enabled);
   el.innerHTML = `
@@ -134,10 +154,10 @@ async function renderEvents(el) {
       <button class="btn-primary btn-small" id="add-event-btn">+ 新增</button>
     </div>
     <div class="card">${renderEventRows(enabled, true)}${renderEventRows(disabled, false)}</div>`;
-  document.getElementById("add-event-btn").addEventListener("click", showEventForm);
-  el.querySelectorAll(".edit-btn").forEach(b => b.addEventListener("click", () => showEventForm(parseInt(b.dataset.id))));
-  el.querySelectorAll(".toggle-btn").forEach(b => b.addEventListener("click", () => toggleEvent(parseInt(b.dataset.id))));
-  el.querySelectorAll(".delete-btn").forEach(b => b.addEventListener("click", () => deleteEvent(parseInt(b.dataset.id))));
+  document.getElementById("add-event-btn").addEventListener("click", () => showEventForm(null));
+  el.querySelectorAll(".edit-btn").forEach(b => b.addEventListener("click", () => showEventForm(parseInt(b.dataset.id, 10))));
+  el.querySelectorAll(".toggle-btn").forEach(b => b.addEventListener("click", () => toggleEvent(parseInt(b.dataset.id, 10))));
+  el.querySelectorAll(".delete-btn").forEach(b => b.addEventListener("click", () => deleteEvent(parseInt(b.dataset.id, 10))));
 }
 
 function renderEventRows(events, active) {
@@ -163,6 +183,7 @@ function renderEventRows(events, active) {
 
 async function toggleEvent(id) {
   const events = await api("/events");
+  if (!Array.isArray(events)) return;
   const ev = events.find(e => e.id === id);
   if (!ev) return;
   await api("/events/"+id, { method: "PUT", body: JSON.stringify({ enabled: !ev.enabled }) });
@@ -179,17 +200,19 @@ async function deleteEvent(id) {
 
 function showEventForm(id) {
   (async () => {
-    const events = id ? await api("/events") : [];
-    const ev = id ? events.find(e => e.id === id) : null;
+    const editId = Number.isFinite(id) ? id : null;
+    const events = editId != null ? await api("/events") : [];
+    const list = Array.isArray(events) ? events : [];
+    const ev = editId != null ? list.find(e => e.id === editId) : null;
     const isNew = !ev;
     const content = document.createElement("div");
-    content.innerHTML = eventFormHTML(ev);
+    content.innerHTML = eventFormHTML(ev, isNew);
     const modal = openModal(content.innerHTML, true);
     if (modal) setupEventForm(modal, ev, isNew);
   })();
 }
 
-function eventFormHTML(ev) {
+function eventFormHTML(ev, isNew = !ev) {
   const s = ev?.schedule || {};
   const m = ev?.messages || {};
   const types = Object.entries(TYPE_META).map(([k,v]) => `<option value="${k}" ${ev?.type===k?'selected':''}>${v.icon} ${v.label}</option>`).join("");
@@ -265,7 +288,10 @@ function setupEventForm(modal, ev, isNew) {
 async function renderStats(el) {
   el.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text2)">⏳ 加载中...</div>`;
   const stats = await api("/stats");
-  const events = await api("/events");
+  if (stats.error) {
+    el.innerHTML = `<div class="empty-state"><div class="icon">⚠️</div><p>${stats.error}</p></div>`;
+    return;
+  }
   el.innerHTML = `
     <h2 style="margin-bottom:12px">📈 统计分析</h2>
     <div class="card">
@@ -305,8 +331,11 @@ async function renderHistory(el) {
 async function renderRecommend(el) {
   el.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text2)">⏳ 加载中...</div>`;
   const recs = await api("/recommend");
-  // Also get dashboard for dynamic stats
   const db = await api("/dashboard");
+  if (!Array.isArray(recs) || db.error) {
+    el.innerHTML = `<div class="empty-state"><div class="icon">⚠️</div><p>${(recs && recs.error) || db.error || "加载失败"}</p></div>`;
+    return;
+  }
   el.innerHTML = `
     <h2 style="margin-bottom:12px">💡 智能推荐</h2>
     ${db.today && db.today.length ? `<div class="card"><div class="card-header"><h2>⏰ 今日提醒</h2></div>${db.today.map(r => `<div class="rec-item"><div class="icon">${typeIcon(r.type)}</div><div class="body"><div class="title">${r.name||'事件'}</div><div class="desc">${r.message}</div></div></div>`).join("")}</div>` : ''}
@@ -320,6 +349,10 @@ async function renderSettings(el) {
   el.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text2)">⏳ 加载中...</div>`;
   const config = await api("/config");
   const health = await api("/health");
+  if (config.error) {
+    el.innerHTML = `<div class="empty-state"><div class="icon">⚠️</div><p>${config.error}</p></div>`;
+    return;
+  }
   el.innerHTML = `
     <h2 style="margin-bottom:12px">⚙️ 系统设置</h2>
     <div class="card">
