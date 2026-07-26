@@ -1,37 +1,58 @@
 {
   "version": 2,
-  "functions": {
-    "api/feishu-event-edge.js": {
-      "runtime": "edge"
+  "builds": [
+    {
+      "src": "api/feishu-event-edge.js",
+      "use": "@vercel/edge"
     },
-    "api/feishu-event-node.js": {
-      "includeFiles": [
-        "feishu-bot.js",
-        "feishu-event-http.js",
-        "store.js",
-        "engine.js",
-        "digest.js",
-        "ledger.js",
-        "sql/**"
-      ]
+    {
+      "src": "api/feishu-event-process.js",
+      "use": "@vercel/node",
+      "config": {
+        "includeFiles": [
+          "feishu-bot.js",
+          "feishu-event-http.js",
+          "store.js",
+          "engine.js",
+          "digest.js",
+          "ledger.js",
+          "sql/**"
+        ]
+      }
     },
-    "api/index.js": {
-      "includeFiles": [
-        "seed.data.json",
-        "store.js",
-        "engine.js",
-        "digest.js",
-        "ledger.js",
-        "feishu-bot.js",
-        "feishu-event-http.js",
-        "sql/**",
-        "public/**"
-      ]
+    {
+      "src": "api/feishu-event.js",
+      "use": "@vercel/node",
+      "config": {
+        "includeFiles": [
+          "feishu-bot.js",
+          "feishu-event-http.js",
+          "store.js",
+          "engine.js"
+        ]
+      }
+    },
+    {
+      "src": "api/index.js",
+      "use": "@vercel/node",
+      "config": {
+        "includeFiles": [
+          "seed.data.json",
+          "store.js",
+          "engine.js",
+          "digest.js",
+          "ledger.js",
+          "feishu-bot.js",
+          "feishu-event-http.js",
+          "sql/**",
+          "public/**"
+        ]
+      }
     }
-  },
+  ],
   "routes": [
-    { "src": "/api/feishu/event/node", "dest": "/api/feishu-event-node.js" },
     { "src": "/api/feishu/event", "dest": "/api/feishu-event-edge.js" },
+    { "src": "/api/feishu-event-process", "dest": "/api/feishu-event-process.js" },
     { "src": "/api/(.*)", "dest": "/api/index.js" },
     { "src": "/(.*)", "dest": "/api/index.js" }
   ],

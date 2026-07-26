@@ -1,8 +1,12 @@
 /**
- * 飞书事件入口（Edge）：URL 校验必须在 3s 内返回。
- * Edge 冷启动远快于 Node，且离国内更近；业务消息转发到 Node 函数。
+ * Edge：飞书 URL 校验必须在 3s 内返回（避开 Node 冷启动）。
+ * 收消息转发到 Node 函数处理。
  */
-export const config = { runtime: 'edge' };
+function isChallenge(body) {
+  if (!body || typeof body !== 'object') return false;
+  if (body.type === 'url_verification') return true;
+  return !!(body.challenge && !body.header && !body.event);
+}
 
 export default async function handler(request) {
   if (request.method === 'GET' || request.method === 'HEAD') {
@@ -19,22 +23,17 @@ export default async function handler(request) {
     body = {};
   }
 
-  if (body.encrypt && !body.challenge && !body.type && !body.header) {
-    return Response.json({
-      error: 'encrypted_payload',
-      hint: '请在飞书「加密策略」清空 Encrypt Key，仅用 Verification Token'
-    });
-  }
-
-  // URL 校验：极快返回 challenge（飞书保存订阅地址时）
-  if (body.type === 'url_verification' || (body.challenge && !body.header && !body.event)) {
+  if (isChallenge(body)) {
     return Response.json({ challenge: body.challenge });
   }
 
   const origin = new URL(request.url).origin;
-  const upstream = await fetch(`${origin}/api/feishu/event/node`, {
+  const upstream = await fetch(`${origin}/api/feishu-event-process`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Feishu-Internal': '1'
+    },
     body: JSON.stringify(body)
   });
   const text = await upstream.text();
