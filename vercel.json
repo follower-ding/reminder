@@ -1,8 +1,13 @@
 {
   "version": 2,
+  "functions": {
+    "api/feishu-event-edge.js": {
+      "runtime": "edge"
+    }
+  },
   "builds": [
     {
-      "src": "api/feishu-event.js",
+      "src": "api/feishu-event-node.js",
       "use": "@vercel/node",
       "config": {
         "includeFiles": [
@@ -35,14 +40,15 @@
     }
   ],
   "routes": [
-    { "src": "/api/feishu/event", "dest": "/api/feishu-event.js" },
+    { "src": "/api/feishu/event/node", "dest": "/api/feishu-event-node.js" },
+    { "src": "/api/feishu/event", "dest": "/api/feishu-event-edge.js" },
     { "src": "/api/(.*)", "dest": "/api/index.js" },
     { "src": "/(.*)", "dest": "/api/index.js" }
   ],
   "crons": [
     {
       "path": "/api/cron/check",
-      "schedule": "0 1 * * *"
+      "schedule": "*/5 * * * *"
     }
   ]
 }
