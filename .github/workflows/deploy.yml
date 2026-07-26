@@ -50,6 +50,7 @@ jobs:
           script: |
             set -e
             APP_DIR="${{ secrets.REMOTE_DIR || '/opt/reminder' }}"
+            PUBLIC_URL="http://nudge.49.235.172.214.sslip.io"
             mkdir -p "$APP_DIR"
             # 旧目录若残留 root 拥有的 .git，会导致 scp/tar 失败；应用本身不需要 .git
             rm -rf "$APP_DIR/.git"
@@ -61,16 +62,25 @@ jobs:
               sudo npm install -g pm2
             fi
             if [ ! -f .env ]; then
-              printf 'PORT=3333\nAPP_URL=http://49.235.172.214:3333\n' > .env
+              printf 'PORT=3333\nAPP_URL=%s\n' "$PUBLIC_URL" > .env
             fi
             set -a
             # shellcheck disable=SC1091
             . ./.env
             set +a
             PORT="${PORT:-3333}"
-            # 确保 APP_URL 指向本机 VPS（勿继续指向 Vercel）
+            # 公网入口：nginx:80 + Host（云安全组未放行 3333；80 已被其他站点占用）
             if ! grep -q '^APP_URL=' .env; then
-              echo 'APP_URL=http://49.235.172.214:3333' >> .env
+              echo "APP_URL=${PUBLIC_URL}" >> .env
+            elif grep -qE '^APP_URL=https?://[^/]*vercel\.app' .env || grep -qE '^APP_URL=http://49\.235\.172\.214:3333$' .env; then
+              sed -i "s|^APP_URL=.*|APP_URL=${PUBLIC_URL}|" .env
+            fi
+            if command -v ufw >/dev/null 2>&1; then
+              sudo ufw allow 3333/tcp comment 'nudge' >/dev/null 2>&1 || true
+            fi
+            if [ -f deploy/nginx-nudge.conf ] && command -v nginx >/dev/null 2>&1; then
+              sudo cp deploy/nginx-nudge.conf /etc/nginx/conf.d/nudge.conf
+              sudo nginx -t && sudo systemctl reload nginx
             fi
             pm2 delete reminder >/dev/null 2>&1 || true
             pm2 start server.js --name reminder --update-env --cwd "$APP_DIR"
@@ -84,4 +94,6 @@ jobs:
             pm2 save
             sleep 2
             curl -sf "http://127.0.0.1:${PORT}/api/health" | head -c 400
+            echo
+            curl -sf -H "Host: nudge.49.235.172.214.sslip.io" "http://127.0.0.1/api/health" | head -c 400 || true
             echo
