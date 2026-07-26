@@ -95,21 +95,37 @@ async function ackTodayFromBot(nameHint) {
 }
 
 /** 群里 @ 机器人后自动记下 chat_id，供主动推送（无需 Webhook） */
+async function rememberChatId(chatId) {
+  const id = String(chatId || '').trim();
+  if (!id) return { ok: false, chat_id: null };
+  const config = await loadConfig();
+  if (config.feishu?.chat_id === id) return { ok: true, chat_id: id, unchanged: true };
+  config.feishu = {
+    ...(config.feishu || {}),
+    chat_id: id
+  };
+  await saveConfig(config);
+  console.log('[feishu] remembered chat_id', `${id.slice(0, 10)}…`);
+  return { ok: true, chat_id: id };
+}
+
 async function rememberChatIdFromEvent(body) {
   try {
-    const meta = feishuBot.extractMessageMeta(body || {});
-    const chatId = String(meta.chatId || '').trim();
-    if (!chatId) return;
-    const config = await loadConfig();
-    if (config.feishu?.chat_id === chatId) return;
-    config.feishu = {
-      ...(config.feishu || {}),
-      chat_id: chatId
-    };
-    await saveConfig(config);
-    console.log('[feishu] remembered chat_id', `${chatId.slice(0, 10)}…`);
+    const chatId = feishuBot.extractChatId(body || {});
+    if (!chatId) {
+      const meta = feishuBot.extractMessageMeta(body || {});
+      if (meta.text) {
+        console.warn('[feishu] got text but no chat_id', JSON.stringify({
+          keys: Object.keys(body || {}),
+          eventKeys: Object.keys(body?.event || {})
+        }));
+      }
+      return { ok: false, chat_id: null };
+    }
+    return await rememberChatId(chatId);
   } catch (e) {
     console.warn('[feishu] remember chat_id failed', e.message);
+    return { ok: false, chat_id: null, error: e.message };
   }
 }
 
@@ -117,8 +133,9 @@ async function handleFeishuHttp(body) {
   await rememberChatIdFromEvent(body);
   return feishuBot.handleEvent(body || {}, {
     ackToday: ackTodayFromBot,
-    listPending: listPendingToday
+    listPending: listPendingToday,
+    bindChat: async (chatId) => rememberChatId(chatId || feishuBot.extractChatId(body || {}))
   });
 }
 
-module.exports = { handleFeishuHttp, ackTodayFromBot, listPendingToday };
+module.exports = { handleFeishuHttp, ackTodayFromBot, listPendingToday, rememberChatId };

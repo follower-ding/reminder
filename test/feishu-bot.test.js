@@ -2,10 +2,12 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   matchAckIntent,
+  matchBindIntent,
   parseMessageText,
   stripMentions,
   handleEvent,
-  sendInteractiveCard
+  sendInteractiveCard,
+  extractChatId
 } = require('../feishu-bot');
 
 describe('feishu bot intents', () => {
@@ -50,6 +52,38 @@ describe('feishu bot intents', () => {
     const r = await sendInteractiveCard('', { card: { elements: [] } });
     assert.equal(r.ok, false);
     assert.match(r.error, /chat_id|receive_id/);
+  });
+
+  it('bind intent and nested chat_id extraction', async () => {
+    assert.equal(matchBindIntent('绑定'), true);
+    assert.equal(matchBindIntent('收到'), false);
+    assert.equal(
+      extractChatId({ event: { message: { chat_id: 'oc_abc', message_id: 'om_1', content: '{}' } } }),
+      'oc_abc'
+    );
+    let bound = null;
+    const r = await handleEvent(
+      {
+        header: { event_type: 'im.message.receive_v1' },
+        event: {
+          message: {
+            message_id: 'om_bind',
+            chat_id: 'oc_group1',
+            message_type: 'text',
+            content: JSON.stringify({ text: '@_user_1 绑定' })
+          }
+        }
+      },
+      {
+        bindChat: async (id) => {
+          bound = id;
+          return { chat_id: id };
+        }
+      }
+    );
+    assert.equal(r.json.action, 'bind');
+    assert.equal(bound, 'oc_group1');
+    assert.equal(r.json.chat_id, 'oc_group1');
   });
 
   it('acks via handler without requiring live Feishu credentials', async () => {
