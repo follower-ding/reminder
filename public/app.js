@@ -355,6 +355,11 @@ async function renderSettings(el) {
   }
   el.innerHTML = `
     <h2 style="margin-bottom:12px">⚙️ 系统设置</h2>
+    ${health.persistence && !health.persistence.durable ? `<div class="card" style="border:1px solid #f5c6cb;background:#fff5f5;color:#c62828">
+      <strong>⚠️ 当前存储未持久化</strong>
+      <p style="font-size:.85rem;margin-top:6px;color:var(--text)">${health.persistence.hint || '刷新后删除/设置可能恢复。请在 Vercel 配置 DATABASE_URL（Neon / Postgres）。'}</p>
+      <p style="font-size:.8rem;margin-top:4px;color:var(--text2)">backend: ${health.persistence.backend}</p>
+    </div>` : `<div class="card" style="font-size:.82rem;color:var(--text2)">💾 存储后端: ${health.persistence?.backend || 'fs'} · 持久化正常</div>`}
     <div class="card">
       <div class="config-section">
         <h3>飞书推送</h3>

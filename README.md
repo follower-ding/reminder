@@ -20,7 +20,20 @@ npm install
 node server.js
 # 访问 http://localhost:3333
 # 默认登录: admin / admin123
+# 本地默认用项目目录下 data.json / config.json（无需数据库）
 ```
+
+### Vercel 生产（必须配数据库）
+
+Vercel Serverless 的 `/tmp` **不能**跨实例持久化。生产环境请配置 Postgres：
+
+1. 创建免费库：[Neon](https://neon.tech) 或 Vercel Storage → Postgres
+2. 在 Vercel 项目 → Settings → Environment Variables 添加：
+   - `DATABASE_URL` = `postgresql://...`（Neon 连接串）
+3. （可选）在库里执行 `sql/schema.sql`；应用首次读写也会自动建表
+4. Redeploy 后打开「设置」页，应显示 `存储后端: postgres · 持久化正常`
+
+未配置 `DATABASE_URL` 时，删除事件 / 飞书设置会在刷新后丢失或恢复成种子数据。
 
 ### 配置推送
 
@@ -46,27 +59,28 @@ pm2 start reminder.js --name reminder-check --cron "0 9,14,21 * * *"
 
 | 平台 | 说明 |
 |------|------|
-| **Zeabur** | 导入 GitHub 仓库，启动命令 `node server.js` |
-| **Railway** | 连接仓库，自动检测 |
+| **Vercel** | 必须设置 `DATABASE_URL`（Neon/Postgres），否则数据不持久 |
+| **Zeabur** | 导入 GitHub 仓库，启动命令 `node server.js`（可用本地文件或同样配 DB） |
+| **Railway** | 连接仓库，自动检测；建议附加 Postgres 插件并注入 `DATABASE_URL` |
 | **Render** | New Web Service → Start Command `node server.js` |
-| **VPS** | `pm2 start server.js --name reminder` |
+| **VPS** | `pm2 start server.js --name reminder`（默认写本地 JSON） |
 
 ## 项目结构
 
 ```
 reminder/
 ├── server.js              # Web 服务器 + 全部 API
+├── store.js               # 持久化层（Postgres / 本地文件）
 ├── reminder.js            # 定时推送脚本
-├── data.json              # 事件数据 + 历史记录
-├── config.json            # 推送配置
-├── package.json           # 项目配置
+├── seed.data.json         # 初始事件种子
+├── sql/schema.sql         # Postgres 建表
+├── package.json
 ├── public/
-│   ├── index.html         # 管理界面
-│   ├── app.js             # 前端逻辑
-│   ├── manifest.json      # PWA 清单
-│   └── sw.js              # Service Worker
-└── .github/workflows/
-    └── deploy.yml         # CI/CD
+│   ├── index.html
+│   ├── app.js
+│   ├── manifest.json
+│   └── sw.js
+└── api/index.js           # Vercel serverless 入口
 ```
 
 ## API 文档

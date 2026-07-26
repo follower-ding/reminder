@@ -1,75 +1,24 @@
 ﻿const express = require('express');
-const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const store = require('./store');
 
-// ─── 路径 ────────────────────────────────────────────
-const DATA_DIR = process.env.DATA_DIR || (process.env.VERCEL ? '/tmp' : __dirname);
-const DATA_FILE = path.join(DATA_DIR, 'data.json');
-const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 const PORT = process.env.PORT || 3333;
 
-const DEFAULT_CONFIG = {
-  feishu: { enabled: false, webhook_url: '' },
-  serverchan: { enabled: false, sendkey: '' },
-  check_times: ['09:00', '14:00', '21:00'],
-  timezone: 'Asia/Shanghai',
-  users: { admin: { password: 'admin123', label: '管理员' } }
-};
+const {
+  loadData,
+  saveData,
+  loadConfig,
+  saveConfig,
+  persistenceInfo,
+  DATA_FILE
+} = store;
 
-// ─── 工具 ────────────────────────────────────────────
-function readJSON(file) {
-  // On Vercel, if file doesn't exist in DATA_DIR, copy from deployment source
-  if (process.env.VERCEL && !fs.existsSync(file)) {
-    const srcFile = path.join(__dirname, path.basename(file));
-    if (fs.existsSync(srcFile)) {
-      fs.copyFileSync(srcFile, file);
-    } else if (path.basename(file) === 'config.json') {
-      fs.writeFileSync(file, JSON.stringify(DEFAULT_CONFIG, null, 2), 'utf8');
-    } else if (path.basename(file) === 'data.json') {
-      const seedFile = path.join(__dirname, 'seed.data.json');
-      if (fs.existsSync(seedFile)) {
-        fs.copyFileSync(seedFile, file);
-      } else {
-        fs.writeFileSync(file, JSON.stringify({ events: [], history: [] }, null, 2), 'utf8');
-      }
-    }
-  }
-  try {
-    const raw = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
-}
+let cachedTimezone = 'Asia/Shanghai';
 
-/** Normalize legacy seed (raw array) into { events, history }. */
-function normalizeData(raw) {
-  if (Array.isArray(raw)) return { events: raw, history: [] };
-  const data = raw && typeof raw === 'object' ? raw : {};
-  return {
-    events: Array.isArray(data.events) ? data.events : [],
-    history: Array.isArray(data.history) ? data.history : []
-  };
-}
-
-function loadData() {
-  return normalizeData(readJSON(DATA_FILE));
-}
-
-function saveData(data) {
-  const normalized = normalizeData(data);
-  writeJSON(DATA_FILE, normalized);
-  return normalized;
-}
-
-function writeJSON(file, data) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
-}
 function now(date) {
   const d = date ? new Date(date) : new Date();
-  const tz = (readJSON(CONFIG_FILE).timezone || 'Asia/Shanghai');
+  const tz = cachedTimezone || 'Asia/Shanghai';
   const fmt = new Intl.DateTimeFormat('en-CA', {
     timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', hour12: false
@@ -328,199 +277,276 @@ function authMiddleware(req, res, next) {
 app.use(authMiddleware);
 
 // ─── 认证 ────────────────────────────────────────────
-app.post('/api/login', (req, res) => {
-  const { username, password } = req.body || {};
-  const config = readJSON(CONFIG_FILE);
-  const user = config.users?.[username];
-  if (!user || user.password !== password) return res.status(401).json({ error: '用户名或密码错误' });
-  const token = createToken({ username, label: user.label });
-  res.json({ token, user: { username, label: user.label } });
+app.post('/api/login', async (req, res) => {
+  try {
+    const { username, password } = req.body || {};
+    const config = await loadConfig();
+    cachedTimezone = config.timezone || cachedTimezone;
+    const user = config.users?.[username];
+    if (!user || user.password !== password) return res.status(401).json({ error: '用户名或密码错误' });
+    const token = createToken({ username, label: user.label });
+    res.json({ token, user: { username, label: user.label } });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── 事件管理 ────────────────────────────────────────
-app.get('/api/events', (req, res) => {
-  const data = loadData();
-  res.json(data.events);
+app.get('/api/events', async (req, res) => {
+  try {
+    const data = await loadData();
+    res.json(data.events);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
-app.post('/api/events', (req, res) => {
-  const data = loadData();
-  const ev = { id: nextId(data.events), ...req.body, enabled: req.body.enabled !== false };
-  if (!ev.type || !ev.name) return res.status(400).json({ error: 'type 和 name 必填' });
-  data.events.push(ev);
-  data.history.push({ id: nextId(data.history), eventId: ev.id, action: 'create', detail: `${ev.type}:${ev.name}`, date: dateStr(), ts: Date.now() });
-  saveData(data);
-  res.json(ev);
+app.post('/api/events', async (req, res) => {
+  try {
+    const data = await loadData();
+    const ev = { id: nextId(data.events), ...req.body, enabled: req.body.enabled !== false };
+    if (!ev.type || !ev.name) return res.status(400).json({ error: 'type 和 name 必填' });
+    data.events.push(ev);
+    data.history.push({ id: nextId(data.history), eventId: ev.id, action: 'create', detail: `${ev.type}:${ev.name}`, date: dateStr(), ts: Date.now() });
+    await saveData(data);
+    res.json(ev);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
-app.put('/api/events/:id', (req, res) => {
-  const data = loadData();
-  const idx = data.events.findIndex(e => e.id === parseInt(req.params.id));
-  if (idx === -1) return res.status(404).json({ error: '未找到' });
-  data.events[idx] = { ...data.events[idx], ...req.body, id: data.events[idx].id };
-  data.history.push({ id: nextId(data.history), eventId: data.events[idx].id, action: 'update', detail: `${data.events[idx].type}:${data.events[idx].name}`, date: dateStr(), ts: Date.now() });
-  saveData(data);
-  res.json(data.events[idx]);
+app.put('/api/events/:id', async (req, res) => {
+  try {
+    const data = await loadData();
+    const idx = data.events.findIndex(e => e.id === parseInt(req.params.id));
+    if (idx === -1) return res.status(404).json({ error: '未找到' });
+    data.events[idx] = { ...data.events[idx], ...req.body, id: data.events[idx].id };
+    data.history.push({ id: nextId(data.history), eventId: data.events[idx].id, action: 'update', detail: `${data.events[idx].type}:${data.events[idx].name}`, date: dateStr(), ts: Date.now() });
+    await saveData(data);
+    res.json(data.events[idx]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
-app.delete('/api/events/:id', (req, res) => {
-  const data = loadData();
-  const idx = data.events.findIndex(e => e.id === parseInt(req.params.id));
-  if (idx === -1) return res.status(404).json({ error: '未找到' });
-  const ev = data.events.splice(idx, 1)[0];
-  data.history.push({ id: nextId(data.history), eventId: ev.id, action: 'delete', detail: `${ev.type}:${ev.name}`, date: dateStr(), ts: Date.now() });
-  saveData(data);
-  res.json({ ok: true });
+app.delete('/api/events/:id', async (req, res) => {
+  try {
+    const data = await loadData();
+    const idx = data.events.findIndex(e => e.id === parseInt(req.params.id));
+    if (idx === -1) return res.status(404).json({ error: '未找到' });
+    const ev = data.events.splice(idx, 1)[0];
+    data.history.push({ id: nextId(data.history), eventId: ev.id, action: 'delete', detail: `${ev.type}:${ev.name}`, date: dateStr(), ts: Date.now() });
+    await saveData(data);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── 检查与统计 ──────────────────────────────────────
-app.get('/api/check', (req, res) => {
-  const data = loadData();
-  const n = now();
-  const results = data.events.map(ev => checkEvent(ev, n)).filter(Boolean);
-  res.json({ date: dateStr(), results });
-});
-
-app.get('/api/dashboard', (req, res) => {
-  const data = loadData();
-  const n = now();
-  const today = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.days === 0);
-  const upcoming = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && (r.days || 0) > 0 && (r.days || 99) <= 7);
-  res.json({ date: dateStr(), today, upcoming: upcoming.sort((a,b) => (a.days||99) - (b.days||99)) });
-});
-
-app.get('/api/stats', (req, res) => {
-  const data = loadData();
-  const events = data.events;
-  const total = events.length;
-  const enabled = events.filter(e => e.enabled).length;
-  const byType = {};
-  for (const ev of events) {
-    byType[ev.type] = (byType[ev.type] || 0) + 1;
+app.get('/api/check', async (req, res) => {
+  try {
+    const data = await loadData();
+    const n = now();
+    const results = data.events.map(ev => checkEvent(ev, n)).filter(Boolean);
+    res.json({ date: dateStr(), results });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-  const n = now();
-  const upcoming30 = events.map(ev => checkEvent(ev, n)).filter(r => r && r.days !== undefined && r.days >= 0 && r.days <= 30).length;
-  const todayCount = events.map(ev => checkEvent(ev, n)).filter(r => r && r.days === 0).length;
-  res.json({ total, enabled, disabled: total - enabled, byType, upcoming30, todayCount });
 });
 
-app.get('/api/recommend', (req, res) => {
-  const data = loadData();
-  res.json(getRecommendations(data));
+app.get('/api/dashboard', async (req, res) => {
+  try {
+    const data = await loadData();
+    const n = now();
+    const today = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.days === 0);
+    const upcoming = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && (r.days || 0) > 0 && (r.days || 99) <= 7);
+    res.json({ date: dateStr(), today, upcoming: upcoming.sort((a,b) => (a.days||99) - (b.days||99)) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
-app.get('/api/history', (req, res) => {
-  const data = loadData();
-  res.json(data.history.slice(-100).reverse());
+app.get('/api/stats', async (req, res) => {
+  try {
+    const data = await loadData();
+    const events = data.events;
+    const total = events.length;
+    const enabled = events.filter(e => e.enabled).length;
+    const byType = {};
+    for (const ev of events) {
+      byType[ev.type] = (byType[ev.type] || 0) + 1;
+    }
+    const n = now();
+    const upcoming30 = events.map(ev => checkEvent(ev, n)).filter(r => r && r.days !== undefined && r.days >= 0 && r.days <= 30).length;
+    const todayCount = events.map(ev => checkEvent(ev, n)).filter(r => r && r.days === 0).length;
+    res.json({ total, enabled, disabled: total - enabled, byType, upcoming30, todayCount });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
-app.post('/api/history', (req, res) => {
-  const data = loadData();
-  const { eventId, action, detail } = req.body || {};
-  if (!action || !detail) return res.status(400).json({ error: 'action 和 detail 必填' });
-  data.history.push({ id: nextId(data.history), eventId: eventId || 0, action, detail, date: dateStr(), ts: Date.now() });
-  saveData(data);
-  res.json({ ok: true });
+app.get('/api/recommend', async (req, res) => {
+  try {
+    const data = await loadData();
+    res.json(getRecommendations(data));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/history', async (req, res) => {
+  try {
+    const data = await loadData();
+    res.json(data.history.slice(-100).reverse());
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/history', async (req, res) => {
+  try {
+    const data = await loadData();
+    const { eventId, action, detail } = req.body || {};
+    if (!action || !detail) return res.status(400).json({ error: 'action 和 detail 必填' });
+    data.history.push({ id: nextId(data.history), eventId: eventId || 0, action, detail, date: dateStr(), ts: Date.now() });
+    await saveData(data);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── 配置 ────────────────────────────────────────────
-app.get('/api/config', (req, res) => {
-  const config = readJSON(CONFIG_FILE);
-  res.json(config);
+app.get('/api/config', async (req, res) => {
+  try {
+    const config = await loadConfig();
+    cachedTimezone = config.timezone || cachedTimezone;
+    res.json(config);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
-app.put('/api/config', (req, res) => {
-  const config = readJSON(CONFIG_FILE);
-  const updated = { ...config, ...req.body };
-  writeJSON(CONFIG_FILE, updated);
-  res.json(updated);
+app.put('/api/config', async (req, res) => {
+  try {
+    const config = await loadConfig();
+    const updated = { ...config, ...req.body };
+    const saved = await saveConfig(updated);
+    cachedTimezone = saved.timezone || cachedTimezone;
+    res.json(saved);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── 健康检查 ──────────────────────────────────────────
-app.get('/api/health', (req, res) => {
-  const data = loadData();
-  res.json({
-    status: 'ok',
-    time: dateStr(),
-    version: '3.0.1',
-    events: data.events.length,
-    vercel: !!process.env.VERCEL
-  });
+app.get('/api/health', async (req, res) => {
+  try {
+    const data = await loadData();
+    const persist = persistenceInfo();
+    res.json({
+      status: 'ok',
+      time: dateStr(),
+      version: '3.1.0',
+      events: data.events.length,
+      vercel: !!process.env.VERCEL,
+      persistence: persist
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── Cron 定时检查（供 cron-job.org 调用）────────────
 app.get('/api/cron/check', async (req, res) => {
-  const data = loadData();
-  const config = readJSON(CONFIG_FILE);
-  const n = now();
-  const todayItems = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.days === 0);
-  const upcomingItems = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.days !== undefined && r.days > 0 && r.days <= 7);
-  const cycleItems = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.cycleDay !== undefined);
-  const allItems = [...todayItems, ...upcomingItems, ...cycleItems];
-  const results = { date: dateStr(), today: todayItems.length, upcoming: upcomingItems.length, pushed: false };
-  if (allItems.length === 0) { return res.json({ ...results, message: 'no reminders' }); }
   try {
-    if (config.feishu?.enabled) {
-      const card = buildFeishuCard(dateStr(), allItems);
-      await sendFeishuCard(config, card);
-    }
-    if (config.serverchan?.enabled) {
-      const title = `📅 ${dateStr()} 日常提醒`;
-      const content = allItems.map(i => `- ${i.message}`).join('\n');
-      await sendServerchan(config, title, content);
-    }
-    results.pushed = true;
-  } catch (e) { results.error = e.message; }
-  res.json(results);
+    const data = await loadData();
+    const config = await loadConfig();
+    cachedTimezone = config.timezone || cachedTimezone;
+    const n = now();
+    const todayItems = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.days === 0);
+    const upcomingItems = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.days !== undefined && r.days > 0 && r.days <= 7);
+    const cycleItems = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.cycleDay !== undefined);
+    const allItems = [...todayItems, ...upcomingItems, ...cycleItems];
+    const results = { date: dateStr(), today: todayItems.length, upcoming: upcomingItems.length, pushed: false };
+    if (allItems.length === 0) { return res.json({ ...results, message: 'no reminders' }); }
+    try {
+      if (config.feishu?.enabled) {
+        const card = buildFeishuCard(dateStr(), allItems);
+        await sendFeishuCard(config, card);
+      }
+      if (config.serverchan?.enabled) {
+        const title = `📅 ${dateStr()} 日常提醒`;
+        const content = allItems.map(i => `- ${i.message}`).join('\n');
+        await sendServerchan(config, title, content);
+      }
+      results.pushed = true;
+    } catch (e) { results.error = e.message; }
+    res.json(results);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
  
 // ─── 推送测试 ──────────────────────────────────────────
 app.post('/api/feishu/test', async (req, res) => {
-  const saved = readJSON(CONFIG_FILE);
-  const body = req.body || {};
-  // 允许用请求体覆盖（前端测试时可直接带表单值，避免未保存/实例间丢失）
-  const config = {
-    ...saved,
-    feishu: {
-      ...(saved.feishu || {}),
-      enabled: body.enabled != null ? !!body.enabled : !!saved.feishu?.enabled,
-      webhook_url: body.webhook_url != null ? String(body.webhook_url).trim() : (saved.feishu?.webhook_url || '')
+  try {
+    const saved = await loadConfig();
+    const body = req.body || {};
+    const config = {
+      ...saved,
+      feishu: {
+        ...(saved.feishu || {}),
+        enabled: body.enabled != null ? !!body.enabled : !!saved.feishu?.enabled,
+        webhook_url: body.webhook_url != null ? String(body.webhook_url).trim() : (saved.feishu?.webhook_url || '')
+      }
+    };
+    if (body.persist) {
+      saved.feishu = config.feishu;
+      await saveConfig(saved);
     }
-  };
-  if (body.persist) {
-    saved.feishu = config.feishu;
-    writeJSON(CONFIG_FILE, saved);
+    const card = buildFeishuCard(dateStr(), [{ message: '✅ 这是一条测试消息' }], '🔔 提醒系统测试');
+    const result = await sendFeishuCard(config, card);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-  const card = buildFeishuCard(dateStr(), [{ message: '✅ 这是一条测试消息' }], '🔔 提醒系统测试');
-  const result = await sendFeishuCard(config, card);
-  res.json(result);
 });
 
 app.post('/api/serverchan/test', async (req, res) => {
-  const saved = readJSON(CONFIG_FILE);
-  const body = req.body || {};
-  const config = {
-    ...saved,
-    serverchan: {
-      ...(saved.serverchan || {}),
-      enabled: body.enabled != null ? !!body.enabled : !!saved.serverchan?.enabled,
-      sendkey: body.sendkey != null ? String(body.sendkey).trim() : (saved.serverchan?.sendkey || '')
+  try {
+    const saved = await loadConfig();
+    const body = req.body || {};
+    const config = {
+      ...saved,
+      serverchan: {
+        ...(saved.serverchan || {}),
+        enabled: body.enabled != null ? !!body.enabled : !!saved.serverchan?.enabled,
+        sendkey: body.sendkey != null ? String(body.sendkey).trim() : (saved.serverchan?.sendkey || '')
+      }
+    };
+    if (body.persist) {
+      saved.serverchan = config.serverchan;
+      await saveConfig(saved);
     }
-  };
-  if (body.persist) {
-    saved.serverchan = config.serverchan;
-    writeJSON(CONFIG_FILE, saved);
+    const result = await sendServerchan(config, '🔔 提醒系统测试', '这是一条来自日常提醒系统的测试消息\n\n如果收到这条消息，说明配置正确 ✅');
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-  const result = await sendServerchan(config, '🔔 提醒系统测试', '这是一条来自日常提醒系统的测试消息\n\n如果收到这条消息，说明配置正确 ✅');
-  res.json(result);
 });
 
 app.post('/api/feishu/send-card', async (req, res) => {
-  const config = readJSON(CONFIG_FILE);
-  const { title, items } = req.body || {};
-  const card = buildFeishuCard(dateStr(), items || [], title);
-  const result = await sendFeishuCard(config, card);
-  res.json(result);
+  try {
+    const config = await loadConfig();
+    const { title, items } = req.body || {};
+    const card = buildFeishuCard(dateStr(), items || [], title);
+    const result = await sendFeishuCard(config, card);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── SPA 兜底 ─────────────────────────────────────────
@@ -531,11 +557,22 @@ app.get('*', (req, res) => {
 
 // ─── 启动（直接 node server.js 时；Vercel / 测试 require 时不自动 listen）──
 if (require.main === module && !process.env.VERCEL) {
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`☀️ 日常提醒系统 v3.0 已启动`);
-    console.log(`   📍 http://0.0.0.0:${PORT}`);
-    console.log(`   ⏰ 时区: ${(readJSON(CONFIG_FILE).timezone || 'Asia/Shanghai')}`);
-    console.log(`   📊 事件数: ${(readJSON(DATA_FILE).events || []).length}`);
+  app.listen(PORT, '0.0.0.0', async () => {
+    try {
+      const cfg = await loadConfig();
+      const data = await loadData();
+      cachedTimezone = cfg.timezone || cachedTimezone;
+      const persist = persistenceInfo();
+      console.log(`☀️ 日常提醒系统 v3.1 已启动`);
+      console.log(`   📍 http://0.0.0.0:${PORT}`);
+      console.log(`   ⏰ 时区: ${cachedTimezone}`);
+      console.log(`   📊 事件数: ${data.events.length}`);
+      console.log(`   💾 存储: ${persist.backend}${persist.durable ? '' : ' (非持久)'}`);
+    } catch (e) {
+      console.log(`☀️ 日常提醒系统 v3.1 已启动`);
+      console.log(`   📍 http://0.0.0.0:${PORT}`);
+      console.log(`   ⚠️  存储初始化: ${e.message}`);
+    }
   });
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "daily-reminder",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "☀️ 日常提醒系统 — 轻量级、可自托管的提醒服务平台",
   "main": "server.js",
   "scripts": {
@@ -9,9 +9,15 @@
     "reminder": "node reminder.js",
     "test": "node --test test/*.js"
   },
-  "keywords": ["reminder", "feishu", "serverchan", "pwa"],
+  "keywords": [
+    "reminder",
+    "feishu",
+    "serverchan",
+    "pwa"
+  ],
   "license": "MIT",
   "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
     "express": "^4.21.0"
   }
 }
