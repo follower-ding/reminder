@@ -11,51 +11,76 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 同步到服务器
-        uses: easingthemes/ssh-deploy@v5
-        with:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_KEY }}
-          ARGS: >-
-            -avz --delete
-            --exclude=node_modules
-            --exclude=config.json
-            --exclude=data.json
-            --exclude=.env
-            --exclude=.git
-            --exclude=.playwright-mcp
-          SOURCE: .
-          REMOTE_HOST: ${{ secrets.SSH_HOST }}
-          REMOTE_USER: ${{ secrets.SSH_USER }}
-          REMOTE_PORT: ${{ secrets.SSH_PORT || '2222' }}
-          TARGET: ${{ secrets.REMOTE_DIR || '/opt/reminder' }}
+      - name: 打包部署产物
+        run: |
+          set +e
+          tar -czf /tmp/reminder-deploy.tgz \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='.env' \
+            --exclude='config.json' \
+            --exclude='data.json' \
+            --exclude='.playwright-mcp' \
+            -C "$GITHUB_WORKSPACE" .
+          status=$?
+          set -e
+          # tar exit 1 = file changed while reading（可忽略）；>=2 才失败
+          if [ "$status" -gt 1 ]; then exit "$status"; fi
+          mv /tmp/reminder-deploy.tgz "$GITHUB_WORKSPACE/reminder-deploy.tgz"
+          ls -lh reminder-deploy.tgz
 
-      - name: 重启服务
-        uses: appleboy/ssh-action@v1
+      - name: 同步到服务器
+        uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          port: ${{ secrets.SSH_PORT || '2222' }}
+          port: ${{ secrets.SSH_PORT || 2222 }}
+          source: reminder-deploy.tgz
+          target: /tmp
+          overwrite: true
+
+      - name: 解压并重启服务
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 2222 }}
           script: |
             set -e
-            cd ${{ secrets.REMOTE_DIR || '/opt/reminder' }}
+            APP_DIR="${{ secrets.REMOTE_DIR || '/opt/reminder' }}"
+            mkdir -p "$APP_DIR"
+            # 旧目录若残留 root 拥有的 .git，会导致 scp/tar 失败；应用本身不需要 .git
+            rm -rf "$APP_DIR/.git"
+            tar -xzf /tmp/reminder-deploy.tgz -C "$APP_DIR"
+            rm -f /tmp/reminder-deploy.tgz
+            cd "$APP_DIR"
             npm install --omit=dev
             if ! command -v pm2 >/dev/null 2>&1; then
               sudo npm install -g pm2
             fi
-            # 保证 .env 存在（首次可空文件；密钥请在服务器手工填写）
-            test -f .env || touch .env
-            export PORT="${PORT:-3333}"
+            if [ ! -f .env ]; then
+              printf 'PORT=3333\nAPP_URL=http://49.235.172.214:3333\n' > .env
+            fi
+            set -a
+            # shellcheck disable=SC1091
+            . ./.env
+            set +a
+            PORT="${PORT:-3333}"
+            # 确保 APP_URL 指向本机 VPS（勿继续指向 Vercel）
+            if ! grep -q '^APP_URL=' .env; then
+              echo 'APP_URL=http://49.235.172.214:3333' >> .env
+            fi
             pm2 delete reminder >/dev/null 2>&1 || true
-            pm2 start server.js --name reminder --update-env --cwd "$PWD"
-            # 飞书长连接（需出站访问 open.feishu.cn，并配置 FEISHU_APP_*）
+            pm2 start server.js --name reminder --update-env --cwd "$APP_DIR"
             if [ -f feishu-ws.js ]; then
               pm2 delete reminder-feishu-ws >/dev/null 2>&1 || true
-              pm2 start feishu-ws.js --name reminder-feishu-ws --update-env --cwd "$PWD"
+              pm2 start feishu-ws.js --name reminder-feishu-ws --update-env --cwd "$APP_DIR"
             fi
-            # 每 5 分钟调度，对齐事项 HH:mm（靠 ledger 去重）
+            # 每 5 分钟调度，对齐事项 HH:mm（靠 ledger 去重；勿改回一天三次）
             pm2 delete reminder-check >/dev/null 2>&1 || true
-            pm2 start reminder.js --name reminder-check --cron "*/5 * * * *" --no-autorestart --cwd "$PWD" || true
+            pm2 start reminder.js --name reminder-check --cron "*/5 * * * *" --no-autorestart --cwd "$APP_DIR" || true
             pm2 save
             sleep 2
             curl -sf "http://127.0.0.1:${PORT}/api/health" | head -c 400
