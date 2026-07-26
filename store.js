@@ -3,10 +3,12 @@
  *
  * Backends (first match wins):
  * 1) PostgreSQL — DATABASE_URL / POSTGRES_URL / POSTGRES_PRISMA_URL
- *    (Neon / Vercel Postgres / 任意 Postgres 均可)
  * 2) Local filesystem — DATA_DIR（本地开发、Zeabur/VPS 单机）
  *
- * Vercel 上若未配置 DATABASE_URL，会落到 /tmp（ephemeral），删除/设置会丢失。
+ * Vercel 上若未配置 DATABASE_URL，会落到 /tmp（ephemeral）。
+ *
+ * 注意：Serverless / Fluid 多实例下禁止进程级读缓存，否则 A 实例删除后
+ * B 实例仍返回旧数据，看起来像「删不掉」。
  */
 const fs = require('fs');
 const path = require('path');
@@ -33,9 +35,12 @@ const DATABASE_URL =
 const KEY_DATA = 'data';
 const KEY_CONFIG = 'config';
 
-const cache = { data: null, config: null };
 let sqlClient = null;
 let schemaReady = false;
+
+function emptyData() {
+  return { events: [], history: [] };
+}
 
 function normalizeData(raw) {
   if (Array.isArray(raw)) return { events: raw, history: [] };
@@ -74,14 +79,73 @@ function persistenceInfo() {
   };
 }
 
+/** 完整演示种子（可选，不再在首次启动时自动灌入）。 */
 function readSeedData() {
   const seedFile = path.join(__dirname, 'seed.data.json');
   try {
     const raw = fs.readFileSync(seedFile, 'utf8').replace(/^\uFEFF/, '');
     return normalizeData(JSON.parse(raw));
   } catch {
-    return { events: [], history: [] };
+    return emptyData();
   }
+}
+
+/** 推送联调测试数据：覆盖「今日必推」场景。 */
+function readPushTestData(nowParts) {
+  const n = nowParts || {};
+  const month = n.month || (new Date().getMonth() + 1);
+  const day = n.day || new Date().getDate();
+  return {
+    events: [
+      {
+        id: 9001,
+        type: 'medicine',
+        name: '【测试】每日吃药提醒',
+        category: 'test',
+        enabled: true,
+        remind_ahead: 0,
+        schedule: { mode: 'daily' },
+        messages: { default: '💊 【推送测试】该吃药了（daily）' }
+      },
+      {
+        id: 9002,
+        type: 'birthday',
+        name: '【测试】今日生日',
+        category: 'test',
+        enabled: true,
+        remind_ahead: 0,
+        schedule: { mode: 'yearly', month, day },
+        messages: {
+          today: '🎂 【推送测试】生日快乐！',
+          reminder: '还有 {days} 天是测试生日'
+        }
+      },
+      {
+        id: 9003,
+        type: 'bill',
+        name: '【测试】今日缴费',
+        category: 'test',
+        enabled: true,
+        remind_ahead: 0,
+        schedule: { mode: 'monthly', day },
+        messages: {
+          today: '📄 【推送测试】今天要缴费',
+          reminder: '还有 {days} 天缴费'
+        }
+      },
+      {
+        id: 9004,
+        type: 'health',
+        name: '【测试】每日运动',
+        category: 'test',
+        enabled: true,
+        remind_ahead: 0,
+        schedule: { mode: 'daily' },
+        messages: { default: '🏃 【推送测试】起来活动一下（Server酱/飞书）' }
+      }
+    ],
+    history: []
+  };
 }
 
 function readJSONFile(file, fallback) {
@@ -146,25 +210,21 @@ async function pgSet(key, value) {
 // ─── Public API ───────────────────────────────────────
 
 async function loadData() {
-  if (cache.data) return structuredClone(cache.data);
   const backend = detectBackend();
-  let data;
   if (backend === 'postgres') {
     const existing = await pgGet(KEY_DATA);
     if (existing == null) {
-      data = readSeedData();
+      // 首次建库：空列表，不再自动灌入演示种子（避免「删不掉」错觉）
+      const data = emptyData();
       await pgSet(KEY_DATA, data);
-    } else {
-      data = normalizeData(existing);
+      return structuredClone(data);
     }
-  } else {
-    if (process.env.VERCEL && !fs.existsSync(DATA_FILE)) {
-      writeJSONFile(DATA_FILE, readSeedData());
-    }
-    data = normalizeData(readJSONFile(DATA_FILE, readSeedData));
+    return normalizeData(existing);
   }
-  cache.data = data;
-  return structuredClone(data);
+  if (process.env.VERCEL && !fs.existsSync(DATA_FILE)) {
+    writeJSONFile(DATA_FILE, emptyData());
+  }
+  return normalizeData(readJSONFile(DATA_FILE, emptyData));
 }
 
 async function saveData(data) {
@@ -175,30 +235,24 @@ async function saveData(data) {
   } else {
     writeJSONFile(DATA_FILE, normalized);
   }
-  cache.data = normalized;
   return structuredClone(normalized);
 }
 
 async function loadConfig() {
-  if (cache.config) return structuredClone(cache.config);
   const backend = detectBackend();
-  let cfg;
   if (backend === 'postgres') {
     const existing = await pgGet(KEY_CONFIG);
     if (existing == null) {
-      cfg = normalizeConfig(DEFAULT_CONFIG);
+      const cfg = normalizeConfig(DEFAULT_CONFIG);
       await pgSet(KEY_CONFIG, cfg);
-    } else {
-      cfg = normalizeConfig(existing);
+      return structuredClone(cfg);
     }
-  } else {
-    if (process.env.VERCEL && !fs.existsSync(CONFIG_FILE)) {
-      writeJSONFile(CONFIG_FILE, DEFAULT_CONFIG);
-    }
-    cfg = normalizeConfig(readJSONFile(CONFIG_FILE, () => DEFAULT_CONFIG));
+    return normalizeConfig(existing);
   }
-  cache.config = cfg;
-  return structuredClone(cfg);
+  if (process.env.VERCEL && !fs.existsSync(CONFIG_FILE)) {
+    writeJSONFile(CONFIG_FILE, DEFAULT_CONFIG);
+  }
+  return normalizeConfig(readJSONFile(CONFIG_FILE, () => DEFAULT_CONFIG));
 }
 
 async function saveConfig(cfg) {
@@ -209,14 +263,11 @@ async function saveConfig(cfg) {
   } else {
     writeJSONFile(CONFIG_FILE, normalized);
   }
-  cache.config = normalized;
   return structuredClone(normalized);
 }
 
-/** Clear memory cache (tests). */
+/** @deprecated 进程缓存已移除；保留空实现以兼容测试调用 */
 function resetCache() {
-  cache.data = null;
-  cache.config = null;
   schemaReady = false;
 }
 
@@ -235,5 +286,7 @@ module.exports = {
   saveConfig,
   resetCache,
   readSeedData,
+  readPushTestData,
+  emptyData,
   ensureSchema
 };

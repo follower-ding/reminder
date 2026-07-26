@@ -11,7 +11,9 @@ const {
   loadConfig,
   saveConfig,
   persistenceInfo,
-  DATA_FILE
+  DATA_FILE,
+  readPushTestData,
+  readSeedData
 } = store;
 
 let cachedTimezone = 'Asia/Shanghai';
@@ -448,11 +450,110 @@ app.get('/api/health', async (req, res) => {
     res.json({
       status: 'ok',
       time: dateStr(),
-      version: '3.1.0',
+      version: '3.1.1',
       events: data.events.length,
       vercel: !!process.env.VERCEL,
       persistence: persist
     });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── 演示 / 推送联调数据 ─────────────────────────────
+app.post('/api/demo/load-push-test', async (req, res) => {
+  try {
+    const n = now();
+    const demo = readPushTestData(n);
+    const prev = await loadData();
+    const saved = await saveData({
+      events: demo.events,
+      history: [
+        ...(prev.history || []),
+        { id: nextId(prev.history || []), eventId: 0, action: 'demo', detail: 'load-push-test', date: dateStr(), ts: Date.now() }
+      ]
+    });
+    const today = saved.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.days === 0);
+    res.json({ ok: true, events: saved.events.length, todayCount: today.length, today });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/demo/load-seed', async (req, res) => {
+  try {
+    const seed = readSeedData();
+    const prev = await loadData();
+    const saved = await saveData({
+      events: seed.events,
+      history: [
+        ...(prev.history || []),
+        { id: nextId(prev.history || []), eventId: 0, action: 'demo', detail: 'load-seed', date: dateStr(), ts: Date.now() }
+      ]
+    });
+    res.json({ ok: true, events: saved.events.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/demo/clear', async (req, res) => {
+  try {
+    const prev = await loadData();
+    await saveData({
+      events: [],
+      history: [
+        ...(prev.history || []),
+        { id: nextId(prev.history || []), eventId: 0, action: 'demo', detail: 'clear-all', date: dateStr(), ts: Date.now() }
+      ]
+    });
+    res.json({ ok: true, events: 0 });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** 用当前事件跑一遍检查引擎，并推送到已启用的飞书/Server酱 */
+app.post('/api/push/run', async (req, res) => {
+  try {
+    const data = await loadData();
+    const saved = await loadConfig();
+    const body = req.body || {};
+    const config = {
+      ...saved,
+      feishu: {
+        ...(saved.feishu || {}),
+        enabled: body.feishu_enabled != null ? !!body.feishu_enabled : !!saved.feishu?.enabled,
+        webhook_url: body.webhook_url != null ? String(body.webhook_url).trim() : (saved.feishu?.webhook_url || '')
+      },
+      serverchan: {
+        ...(saved.serverchan || {}),
+        enabled: body.serverchan_enabled != null ? !!body.serverchan_enabled : !!saved.serverchan?.enabled,
+        sendkey: body.sendkey != null ? String(body.sendkey).trim() : (saved.serverchan?.sendkey || '')
+      }
+    };
+    const n = now();
+    const todayItems = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.days === 0);
+    const upcomingItems = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.days !== undefined && r.days > 0 && r.days <= 7);
+    const allItems = [...todayItems, ...upcomingItems];
+    const out = { date: dateStr(), today: todayItems.length, upcoming: upcomingItems.length, feishu: null, serverchan: null };
+    if (!allItems.length) {
+      out.message = '当前没有可推送的提醒（请先「加载推送测试数据」）';
+      return res.json(out);
+    }
+    if (config.feishu?.enabled && config.feishu?.webhook_url) {
+      out.feishu = await sendFeishuCard(config, buildFeishuCard(dateStr(), allItems, '🔔 推送联调'));
+    } else {
+      out.feishu = { ok: false, error: '飞书未配置' };
+    }
+    if (config.serverchan?.enabled && config.serverchan?.sendkey) {
+      const title = `📅 ${dateStr()} 推送联调`;
+      const content = allItems.map(i => `- ${i.message}`).join('\n');
+      out.serverchan = await sendServerchan(config, title, content);
+    } else {
+      out.serverchan = { ok: false, error: 'Server酱未配置' };
+    }
+    res.json(out);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
