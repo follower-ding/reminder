@@ -29,8 +29,18 @@ function readJSON(file) {
       }
     }
   }
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
-  catch { return {}; }
+  try {
+    const raw = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+function loadData() {
+  const data = readJSON(DATA_FILE);
+  if (!Array.isArray(data.events)) data.events = [];
+  if (!Array.isArray(data.history)) data.history = [];
+  return data;
 }
 function writeJSON(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
@@ -56,8 +66,38 @@ function daysBetween(a, b) {
 function nextId(arr) {
   return arr.length ? Math.max(...arr.map(x => x.id)) + 1 : 1;
 }
-function authToken() {
-  return crypto.randomBytes(16).toString('hex');
+// 无状态签名 Token（Vercel 多实例/冷启动不丢登录态）
+const TOKEN_SECRET = process.env.TOKEN_SECRET || 'reminder-hmac-v1-change-me';
+const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function b64url(buf) {
+  return Buffer.from(buf).toString('base64url');
+}
+function createToken(user) {
+  const payload = b64url(JSON.stringify({
+    u: user.username,
+    l: user.label || user.username,
+    exp: Date.now() + TOKEN_TTL_MS
+  }));
+  const sig = crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+function verifyToken(token) {
+  if (!token || typeof token !== 'string') return null;
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [payload, sig] = parts;
+  const expected = crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest('base64url');
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  try {
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (!data.exp || data.exp < Date.now() || !data.u) return null;
+    return { username: data.u, label: data.l || data.u };
+  } catch {
+    return null;
+  }
 }
 
 // ─── 检查引擎 ───────────────────────────────────────
@@ -84,37 +124,39 @@ function checkEvent(ev, _now) {
   if (!ev.enabled) return null;
 
   if (mode === 'daily') {
-    return { active: true, message: msg.default || `⏰ ${ev.name} — 该行动了`, urgent: true };
+    return { active: true, message: msg.default || `⏰ ${ev.name} — 该行动了`, urgent: true, days: 0, name: ev.name, type: ev.type };
   }
 
   if (mode === 'weekly') {
     const dayOfWeek = sched.day_of_week;
-    if (dayOfWeek === undefined || n.dayOfWeek === undefined) {
-      const d = new Date(n.year, n.month-1, n.day);
-      const dow = d.getDay();
-      if (dayOfWeek !== undefined && dow === dayOfWeek) {
-        return { active: true, message: msg.default || `📅 ${ev.name} — 今天是提醒日`, urgent: true };
-      }
+    const d = new Date(n.year, n.month-1, n.day);
+    const dow = d.getDay();
+    if (dayOfWeek !== undefined && dow === dayOfWeek) {
+      return { active: true, message: msg.default || `📅 ${ev.name} — 今天是提醒日`, urgent: true, days: 0, name: ev.name, type: ev.type };
     }
     return null;
   }
 
   if (mode === 'monthly' || mode === 'yearly') {
-    const target = new Date(n.year, (sched.month||1)-1, sched.day||1);
-    const targetDay = new Date(n.year, (sched.month||1)-1, sched.day||1);
+    const month = mode === 'monthly' ? n.month : (sched.month || 1);
+    const targetDay = new Date(n.year, month - 1, sched.day || 1);
     let diff = Math.floor((targetDay - new Date(n.year, n.month-1, n.day)) / 86400000);
     if (mode === 'yearly' && diff < 0) {
       targetDay.setFullYear(n.year + 1);
       diff = Math.floor((targetDay - new Date(n.year, n.month-1, n.day)) / 86400000);
     }
+    if (mode === 'monthly' && diff < 0) {
+      targetDay.setMonth(n.month); // next month
+      diff = Math.floor((targetDay - new Date(n.year, n.month-1, n.day)) / 86400000);
+    }
     const daysStr = diff.toString();
     if (diff === 0) {
       const m = msg.today ? msg.today.replace(/\{days\}/g, daysStr).replace(/\{name\}/g, ev.name) : `${TYPE_META[ev.type]?.label||'📌'} ${ev.name} — 就是今天！`;
-      return { active: true, message: m, urgent: true, days: 0 };
+      return { active: true, message: m, urgent: true, days: 0, name: ev.name, type: ev.type };
     }
     if (diff > 0 && diff <= ahead) {
       const m = msg.reminder ? msg.reminder.replace(/\{days\}/g, daysStr).replace(/\{name\}/g, ev.name) : `${TYPE_META[ev.type]?.label||'📌'} ${ev.name} — 还有 ${diff} 天`;
-      return { active: true, message: m, urgent: false, days: diff };
+      return { active: true, message: m, urgent: false, days: diff, name: ev.name, type: ev.type };
     }
     return null;
   }
@@ -131,14 +173,14 @@ function checkEvent(ev, _now) {
 
     if (dayInCycle < periodLen) {
       const key = `day_${dayInCycle + 1}`;
-      return { active: true, message: msg[key] || `🩸 经期第${dayInCycle+1}天`, urgent: true, cycleDay: dayInCycle+1 };
+      return { active: true, message: msg[key] || `🩸 经期第${dayInCycle+1}天`, urgent: true, days: 0, cycleDay: dayInCycle+1, name: ev.name, type: ev.type };
     }
     if (dayInCycle >= cycleLen - 14 - 3 && dayInCycle <= cycleLen - 14 + 3) {
-      return { active: true, message: msg.ovulation || '🥚 排卵期', urgent: false, cycleDay: dayInCycle+1 };
+      return { active: true, message: msg.ovulation || '🥚 排卵期', urgent: false, days: 0, cycleDay: dayInCycle+1, name: ev.name, type: ev.type };
     }
     const preDays = sched.remind_ahead_cycle || 3;
     if (cycleLen - dayInCycle <= preDays) {
-      return { active: true, message: msg.pre || `🩸 经期快到了（还有${cycleLen - dayInCycle}天）`, urgent: false, cycleDay: dayInCycle+1 };
+      return { active: true, message: msg.pre || `🩸 经期快到了（还有${cycleLen - dayInCycle}天）`, urgent: false, days: cycleLen - dayInCycle, cycleDay: dayInCycle+1, name: ev.name, type: ev.type };
     }
     return null;
   }
@@ -152,7 +194,7 @@ function getRecommendations(data) {
   const n = now();
   const nowDate = new Date(n.year, n.month-1, n.day);
 
-  for (const ev of data.events) {
+  for (const ev of (data.events || [])) {
     if (!ev.enabled) continue;
     const sched = ev.schedule || {};
 
@@ -245,16 +287,15 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 认证中间件 (简单 Token)
-let tokens = {};
+// 认证中间件（HMAC 签名 Token，跨进程/冷启动有效）
 function authMiddleware(req, res, next) {
-  const bypass = ['/api/login', '/api/health', '/api/check', '/'];
-  if (bypass.some(p => req.path === p || req.path.startsWith(p) && req.method === 'GET' && !req.path.startsWith('/api'))) return next();
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  if (token && tokens[token]) { req.user = tokens[token]; return next(); }
-  // 仅对 /api/ 路径要求认证
-  if (req.path.startsWith('/api/')) return res.status(401).json({ error: '未认证' });
-  next();
+  const bypassExact = new Set(['/api/login', '/api/health', '/api/check', '/api/cron/check']);
+  if (bypassExact.has(req.path)) return next();
+  if (!req.path.startsWith('/api/')) return next();
+  const token = req.headers.authorization?.replace(/^Bearer\s+/i, '');
+  const user = verifyToken(token);
+  if (user) { req.user = user; return next(); }
+  return res.status(401).json({ error: '未认证' });
 }
 app.use(authMiddleware);
 
@@ -264,30 +305,28 @@ app.post('/api/login', (req, res) => {
   const config = readJSON(CONFIG_FILE);
   const user = config.users?.[username];
   if (!user || user.password !== password) return res.status(401).json({ error: '用户名或密码错误' });
-  const token = authToken();
-  tokens[token] = { username, label: user.label };
+  const token = createToken({ username, label: user.label });
   res.json({ token, user: { username, label: user.label } });
 });
 
 // ─── 事件管理 ────────────────────────────────────────
 app.get('/api/events', (req, res) => {
-  const data = readJSON(DATA_FILE);
-  res.json(data.events || []);
+  const data = loadData();
+  res.json(data.events);
 });
 
 app.post('/api/events', (req, res) => {
-  const data = readJSON(DATA_FILE);
+  const data = loadData();
   const ev = { id: nextId(data.events), ...req.body, enabled: req.body.enabled !== false };
   if (!ev.type || !ev.name) return res.status(400).json({ error: 'type 和 name 必填' });
   data.events.push(ev);
-  data.history = data.history || [];
   data.history.push({ id: nextId(data.history), eventId: ev.id, action: 'create', detail: `${ev.type}:${ev.name}`, date: dateStr(), ts: Date.now() });
   writeJSON(DATA_FILE, data);
   res.json(ev);
 });
 
 app.put('/api/events/:id', (req, res) => {
-  const data = readJSON(DATA_FILE);
+  const data = loadData();
   const idx = data.events.findIndex(e => e.id === parseInt(req.params.id));
   if (idx === -1) return res.status(404).json({ error: '未找到' });
   data.events[idx] = { ...data.events[idx], ...req.body, id: data.events[idx].id };
@@ -297,7 +336,7 @@ app.put('/api/events/:id', (req, res) => {
 });
 
 app.delete('/api/events/:id', (req, res) => {
-  const data = readJSON(DATA_FILE);
+  const data = loadData();
   const idx = data.events.findIndex(e => e.id === parseInt(req.params.id));
   if (idx === -1) return res.status(404).json({ error: '未找到' });
   const ev = data.events.splice(idx, 1)[0];
@@ -308,14 +347,14 @@ app.delete('/api/events/:id', (req, res) => {
 
 // ─── 检查与统计 ──────────────────────────────────────
 app.get('/api/check', (req, res) => {
-  const data = readJSON(DATA_FILE);
+  const data = loadData();
   const n = now();
   const results = data.events.map(ev => checkEvent(ev, n)).filter(Boolean);
   res.json({ date: dateStr(), results });
 });
 
 app.get('/api/dashboard', (req, res) => {
-  const data = readJSON(DATA_FILE);
+  const data = loadData();
   const n = now();
   const today = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.days === 0);
   const upcoming = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && (r.days || 0) > 0 && (r.days || 99) <= 7);
@@ -323,8 +362,8 @@ app.get('/api/dashboard', (req, res) => {
 });
 
 app.get('/api/stats', (req, res) => {
-  const data = readJSON(DATA_FILE);
-  const events = data.events || [];
+  const data = loadData();
+  const events = data.events;
   const total = events.length;
   const enabled = events.filter(e => e.enabled).length;
   const byType = {};
@@ -338,20 +377,19 @@ app.get('/api/stats', (req, res) => {
 });
 
 app.get('/api/recommend', (req, res) => {
-  const data = readJSON(DATA_FILE);
+  const data = loadData();
   res.json(getRecommendations(data));
 });
 
 app.get('/api/history', (req, res) => {
-  const data = readJSON(DATA_FILE);
-  res.json((data.history || []).slice(-100).reverse());
+  const data = loadData();
+  res.json(data.history.slice(-100).reverse());
 });
 
 app.post('/api/history', (req, res) => {
-  const data = readJSON(DATA_FILE);
+  const data = loadData();
   const { eventId, action, detail } = req.body || {};
   if (!action || !detail) return res.status(400).json({ error: 'action 和 detail 必填' });
-  data.history = data.history || [];
   data.history.push({ id: nextId(data.history), eventId: eventId || 0, action, detail, date: dateStr(), ts: Date.now() });
   writeJSON(DATA_FILE, data);
   res.json({ ok: true });
@@ -377,7 +415,7 @@ app.get('/api/health', (req, res) => {
 
 // ─── Cron 定时检查（供 cron-job.org 调用）────────────
 app.get('/api/cron/check', async (req, res) => {
-  const data = readJSON(DATA_FILE);
+  const data = loadData();
   const config = readJSON(CONFIG_FILE);
   const n = now();
   const todayItems = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.days === 0);
@@ -429,8 +467,8 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// ─── 启动 ────────────────────────────────────────────
-if (!process.env.VERCEL) {
+// ─── 启动（直接 node server.js 时；Vercel / 测试 require 时不自动 listen）──
+if (require.main === module && !process.env.VERCEL) {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`☀️ 日常提醒系统 v3.0 已启动`);
     console.log(`   📍 http://0.0.0.0:${PORT}`);
