@@ -13,19 +13,25 @@
 const fs = require('fs');
 const path = require('path');
 
+const { loadData, loadConfig, normalizeData } = require('./store');
+
 const DATA_FILE = path.join(__dirname, 'data.json');
 const CONFIG_FILE = path.join(__dirname, 'config.json');
 
 function readJSON(file) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
+  try { return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')); }
   catch { return {}; }
 }
 
 function now(date) {
   const d = date ? new Date(date) : new Date();
-  const tz = (readJSON(CONFIG_FILE).timezone || 'Asia/Shanghai');
+  // timezone from env/file fallback for CLI; store.loadConfig used in runCheck
+  let tz = 'Asia/Shanghai';
+  try {
+    const cfg = readJSON(CONFIG_FILE);
+    if (cfg.timezone) tz = cfg.timezone;
+  } catch { /* ignore */ }
   const opts = { timeZone: tz, hour12: false };
-  const parts = {};
   const fmt = d.toLocaleString('en-CA', { ...opts, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
   const [y, mo, day, h, mi] = fmt.split(/[-\s:]/).map(Number);
   return { year: y, month: mo, day, hour: h, minute: mi,
@@ -178,12 +184,13 @@ async function runCheck() {
   console.log(`🔍 日常提醒检查 — ${dateStr()} ${now().hour}:${String(now().minute).padStart(2,'0')}`);
   console.log(`═══════════════════════════════════════════`);
 
-  const config = readJSON(CONFIG_FILE);
-  const data = readJSON(DATA_FILE);
+  const config = await loadConfig();
+  const data = await loadData();
+  const events = normalizeData(data).events;
   const n = now();
-  const todayItems = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.days === 0);
-  const upcomingItems = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.days !== undefined && r.days > 0 && r.days <= 7);
-  const cycleItems = data.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.cycleDay !== undefined);
+  const todayItems = events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.days === 0);
+  const upcomingItems = events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.days !== undefined && r.days > 0 && r.days <= 7);
+  const cycleItems = events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.cycleDay !== undefined);
 
   console.log(`  今日提醒: ${todayItems.length} 项`);
   console.log(`  近期待办: ${upcomingItems.length} 项`);

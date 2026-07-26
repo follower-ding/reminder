@@ -5,7 +5,7 @@
       "src": "api/index.js",
       "use": "@vercel/node",
       "config": {
-        "includeFiles": ["seed.data.json", "public/**"]
+        "includeFiles": ["seed.data.json", "store.js", "sql/**", "public/**"]
       }
     }
   ],
