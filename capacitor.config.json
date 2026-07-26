@@ -1,0 +1,13 @@
+{
+  "appId": "app.nudge.reminder",
+  "appName": "Nudge",
+  "webDir": "www",
+  "server": {
+    "url": "http://49.235.172.214:9999",
+    "cleartext": true,
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}

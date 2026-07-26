@@ -64,6 +64,7 @@ pm2 start reminder.js --name reminder-check --cron "0 9,14,21 * * *"
 | **Railway** | 连接仓库，自动检测；建议附加 Postgres 插件并注入 `DATABASE_URL` |
 | **Render** | New Web Service → Start Command `node server.js` |
 | **VPS** | `pm2 start server.js --name reminder`（默认写本地 JSON） |
+| **安卓 APK** | Capacitor 壳，见 [docs/ANDROID.md](docs/ANDROID.md) |
 
 ## 项目结构
 

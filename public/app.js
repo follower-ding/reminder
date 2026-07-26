@@ -585,38 +585,48 @@ async function renderSubscribe(el) {
   if (cfg.error) { el.innerHTML = `<div class="empty-state"><p>${esc(cfg.error)}</p></div>`; return; }
   const d = cfg.digests || {};
   const sections = dig.digests?.sections || [];
+  const ghTime = d.github?.push_time || "";
+  const newsTime = d.news?.push_time || "";
+  const learnTime = d.learning?.push_time || "";
   el.innerHTML = `
     <div class="hero">
       <div>
         <div class="eyebrow">Digest</div>
         <h2>订阅</h2>
-        <p class="sub">热点与事项分开发 · 独立推送通道</p>
+        <p class="sub">每个来源单独一张飞书卡 · 可选 AI 导读</p>
       </div>
     </div>
     <div class="nudge-card digest-card" style="margin-bottom:1rem">
-      <div class="toggle-row"><span><strong>启用每日热点</strong></span><div class="toggle ${d.enabled !== false ? "on" : ""}" id="tog-dig"></div></div>
-      <div class="form-group"><label>推送时刻</label><input id="dig-time" type="time" value="${esc(d.push_time || "20:00")}"></div>
-      <p class="form-hint">到点后单独推送「Nudge · 每日热点」卡，不与事项合并。</p>
+      <div class="toggle-row"><span><strong>启用订阅推送</strong></span><div class="toggle ${d.enabled !== false ? "on" : ""}" id="tog-dig"></div></div>
+      <div class="toggle-row"><span>AI 导读（DeepSeek）</span><div class="toggle ${d.ai_summary !== false ? "on" : ""}" id="tog-ai"></div></div>
+      <div class="form-group"><label>默认推送时刻（各源未单独设置时使用）</label><input id="dig-time" type="time" value="${esc(d.push_time || "20:00")}"></div>
+      <p class="form-hint">GitHub / 快讯 / 学习会各发一张卡，不与事项合并。需已配置 DEEPSEEK_API_KEY 才会写导读。</p>
     </div>
-    <div class="section-title"><h3>来源</h3></div>
+    <div class="section-title"><h3>来源（分模块）</h3></div>
     <div class="source-grid">
       <div class="nudge-card source-card digest-card">
         <div class="toggle-row">
           <div><div class="title">GitHub 热门</div><div class="desc">近期高星仓库</div></div>
           <div class="toggle ${d.github?.enabled !== false ? "on" : ""}" id="tog-gh"></div>
         </div>
+        <div class="toggle-row"><span class="form-hint">本源 AI 导读</span><div class="toggle ${d.github?.ai !== false ? "on" : ""}" id="tog-gh-ai"></div></div>
+        <div class="form-group"><label>本源时刻（可空=用默认）</label><input id="gh-time" type="time" value="${esc(ghTime)}"></div>
       </div>
       <div class="nudge-card source-card digest-card">
         <div class="toggle-row">
-          <div><div class="title">Hacker News</div><div class="desc">Frontpage</div></div>
+          <div><div class="title">科技快讯</div><div class="desc">Hacker News 等 RSS</div></div>
           <div class="toggle ${d.news?.enabled !== false ? "on" : ""}" id="tog-news"></div>
         </div>
+        <div class="toggle-row"><span class="form-hint">本源 AI 导读</span><div class="toggle ${d.news?.ai !== false ? "on" : ""}" id="tog-news-ai"></div></div>
+        <div class="form-group"><label>本源时刻（可空=用默认）</label><input id="news-time" type="time" value="${esc(newsTime)}"></div>
       </div>
       <div class="nudge-card source-card digest-card">
         <div class="toggle-row">
           <div><div class="title">学习推荐</div><div class="desc">主题轮换</div></div>
           <div class="toggle ${d.learning?.enabled !== false ? "on" : ""}" id="tog-learn"></div>
         </div>
+        <div class="toggle-row"><span class="form-hint">本源 AI 导读</span><div class="toggle ${d.learning?.ai !== false ? "on" : ""}" id="tog-learn-ai"></div></div>
+        <div class="form-group"><label>本源时刻（可空=用默认）</label><input id="learn-time" type="time" value="${esc(learnTime)}"></div>
       </div>
     </div>
     <button class="btn-primary btn-small" id="save-sub" type="button" style="margin:1rem 0">保存订阅</button>
@@ -624,27 +634,47 @@ async function renderSubscribe(el) {
     <div class="card-grid">
       ${sections.length ? sections.map((sec) => `
         <div class="nudge-card span-2 digest-card">
-          <div class="section-title"><h3>${esc(sec.title)}</h3></div>
+          <div class="section-title">
+            <h3>${esc(sec.title)}</h3>
+            <span class="form-hint">${esc(sec.push_time || "")}${sec.ai ? " · AI" : ""}</span>
+          </div>
           ${(sec.items || []).slice(0, 4).map((it) => `
             <div class="preview-row">
               <div class="preview-title">${it.url ? `<a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.title)}</a>` : esc(it.title)}</div>
-              <div class="form-hint">${esc(it.desc || it.meta || "")}</div>
+              <div class="form-hint">${esc(it.blurb || it.desc || it.meta || "")}</div>
             </div>`).join("") || `<div class="empty-state"><p>${esc(sec.error || "暂无")}</p></div>`}
         </div>`).join("") : `<div class="empty-panel">保存并启用源后可预览</div>`}
     </div>
   `;
-  ["tog-dig", "tog-gh", "tog-news", "tog-learn"].forEach((id) => {
-    document.getElementById(id).onclick = function () { this.classList.toggle("on"); };
+  ["tog-dig", "tog-ai", "tog-gh", "tog-gh-ai", "tog-news", "tog-news-ai", "tog-learn", "tog-learn-ai"].forEach((id) => {
+    const node = document.getElementById(id);
+    if (node) node.onclick = function () { this.classList.toggle("on"); };
   });
   document.getElementById("save-sub").onclick = async () => {
     const c = await api("/config");
     c.digests = {
       ...(c.digests || {}),
       enabled: document.getElementById("tog-dig").classList.contains("on"),
+      ai_summary: document.getElementById("tog-ai").classList.contains("on"),
       push_time: document.getElementById("dig-time").value || "20:00",
-      github: { enabled: document.getElementById("tog-gh").classList.contains("on") },
-      news: { ...(c.digests?.news || {}), enabled: document.getElementById("tog-news").classList.contains("on") },
-      learning: { ...(c.digests?.learning || {}), enabled: document.getElementById("tog-learn").classList.contains("on") }
+      github: {
+        ...(c.digests?.github || {}),
+        enabled: document.getElementById("tog-gh").classList.contains("on"),
+        ai: document.getElementById("tog-gh-ai").classList.contains("on"),
+        push_time: document.getElementById("gh-time").value || ""
+      },
+      news: {
+        ...(c.digests?.news || {}),
+        enabled: document.getElementById("tog-news").classList.contains("on"),
+        ai: document.getElementById("tog-news-ai").classList.contains("on"),
+        push_time: document.getElementById("news-time").value || ""
+      },
+      learning: {
+        ...(c.digests?.learning || {}),
+        enabled: document.getElementById("tog-learn").classList.contains("on"),
+        ai: document.getElementById("tog-learn-ai").classList.contains("on"),
+        push_time: document.getElementById("learn-time").value || ""
+      }
     };
     await api("/config", { method: "PUT", body: JSON.stringify(c) });
     toast("订阅已保存");
@@ -750,7 +780,7 @@ async function renderSettings(el) {
     toast(r.error || `已加载 ${r.events} 条`);
   };
   document.getElementById("demo-run").onclick = async () => {
-    if (!confirm("手动推送？事项与热点会分两张卡。")) return;
+    if (!confirm("手动推送？事项一张卡；每个订阅源各一张卡（含 AI 导读）。")) return;
     const r = await api("/push/run", { method: "POST", body: JSON.stringify({
       feishu_enabled: document.getElementById("tog-fs").classList.contains("on"),
       serverchan_enabled: document.getElementById("tog-sc").classList.contains("on"),
@@ -759,8 +789,10 @@ async function renderSettings(el) {
       sendkey: document.getElementById("sc-key").value.trim(),
       include_digest: true
     }) });
-    const ok = r.items_push?.feishu?.ok || r.digest_push?.feishu?.ok || r.feishu?.ok;
-    toast(r.message || (ok ? "已分通道推送" : `推送失败 · ${r.feishu?.error || ""}`));
+    const digOk = (r.digest_pushes || []).some((x) => x.feishu?.ok || x.ok);
+    const ok = r.items_push?.feishu?.ok || digOk || r.digest_push?.feishu?.ok || r.feishu?.ok;
+    const digN = (r.digest_pushes || []).length;
+    toast(r.message || (ok ? `已推送${digN ? ` · 订阅 ${digN} 张卡` : ""}` : `推送失败 · ${r.feishu?.error || ""}`));
   };
   document.getElementById("demo-clear").onclick = async () => {
     if (!confirm("清空全部事项？")) return;

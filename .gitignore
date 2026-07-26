@@ -6,3 +6,12 @@ data.json
 .DS_Store
 thumbs.db
 .playwright-mcp/
+reminder-deploy.tgz
+android/.gradle/
+android/app/build/
+android/build/
+android/captures/
+android/local.properties
+*.apk
+*.aab
+.idea/
