@@ -403,24 +403,36 @@ async function renderSettings(el) {
     const cfg = await api("/config");
     cfg.feishu = cfg.feishu || {};
     cfg.feishu.enabled = document.getElementById("toggle-feishu").classList.contains("on");
-    cfg.feishu.webhook_url = document.getElementById("feishu-url").value;
+    cfg.feishu.webhook_url = document.getElementById("feishu-url").value.trim();
     await api("/config", { method: "PUT", body: JSON.stringify(cfg) });
     toast("✅ 飞书配置已保存");
   });
   document.getElementById("test-feishu").addEventListener("click", async () => {
-    const res = await api("/feishu/test", { method: "POST" });
-    toast(res.ok ? "✅ 飞书测试消息已发送" : "❌ " + (res.error || "发送失败"));
+    const enabled = document.getElementById("toggle-feishu").classList.contains("on");
+    const webhook_url = document.getElementById("feishu-url").value.trim();
+    if (!webhook_url) { toast("❌ 请先填写 Webhook URL"); return; }
+    const res = await api("/feishu/test", {
+      method: "POST",
+      body: JSON.stringify({ enabled: enabled || true, webhook_url, persist: true })
+    });
+    toast(res.ok ? "✅ 飞书测试消息已发送" : "❌ " + (res.error || res.data || "发送失败"));
   });
   document.getElementById("save-serverchan").addEventListener("click", async () => {
     const cfg = await api("/config");
     cfg.serverchan = cfg.serverchan || {};
     cfg.serverchan.enabled = document.getElementById("toggle-serverchan").classList.contains("on");
-    cfg.serverchan.sendkey = document.getElementById("serverchan-key").value;
+    cfg.serverchan.sendkey = document.getElementById("serverchan-key").value.trim();
     await api("/config", { method: "PUT", body: JSON.stringify(cfg) });
     toast("✅ Server酱配置已保存");
   });
   document.getElementById("test-serverchan").addEventListener("click", async () => {
-    const res = await api("/serverchan/test", { method: "POST" });
+    const enabled = document.getElementById("toggle-serverchan").classList.contains("on");
+    const sendkey = document.getElementById("serverchan-key").value.trim();
+    if (!sendkey) { toast("❌ 请先填写 SendKey"); return; }
+    const res = await api("/serverchan/test", {
+      method: "POST",
+      body: JSON.stringify({ enabled: enabled || true, sendkey, persist: true })
+    });
     toast(res.ok ? "✅ 测试消息已发送" : "❌ " + (res.error || "发送失败"));
   });
   document.getElementById("save-other").addEventListener("click", async () => {
