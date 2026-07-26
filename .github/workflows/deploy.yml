@@ -3,6 +3,7 @@ name: 部署提醒系统
 on:
   push:
     branches: [main, master]
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -10,22 +11,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装 Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: 安装依赖
-        run: npm install
-
       - name: 同步到服务器
         uses: easingthemes/ssh-deploy@v5
         with:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_KEY }}
-          ARGS: -avz --delete --exclude=node_modules --exclude=config.json --exclude=data.json
+          ARGS: >-
+            -avz --delete
+            --exclude=node_modules
+            --exclude=config.json
+            --exclude=data.json
+            --exclude=.env
+            --exclude=.git
+            --exclude=.playwright-mcp
           SOURCE: .
           REMOTE_HOST: ${{ secrets.SSH_HOST }}
           REMOTE_USER: ${{ secrets.SSH_USER }}
+          REMOTE_PORT: ${{ secrets.SSH_PORT || '2222' }}
           TARGET: ${{ secrets.REMOTE_DIR || '/opt/reminder' }}
 
       - name: 重启服务
@@ -34,11 +35,25 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          port: ${{ secrets.SSH_PORT || '22' }}
+          port: ${{ secrets.SSH_PORT || '2222' }}
           script: |
+            set -e
             cd ${{ secrets.REMOTE_DIR || '/opt/reminder' }}
-            npm install
-            pm2 restart reminder || pm2 start server.js --name reminder
-            # 飞书长连接（需服务器能出站访问 open.feishu.cn，并配置 FEISHU_APP_*）
-            pm2 restart reminder-feishu-ws || pm2 start feishu-ws.js --name reminder-feishu-ws
+            npm install --omit=dev
+            if ! command -v pm2 >/dev/null 2>&1; then
+              sudo npm install -g pm2
+            fi
+            # 保证 .env 存在（首次可空文件；密钥请在服务器手工填写）
+            test -f .env || touch .env
+            export PORT="${PORT:-3333}"
+            pm2 delete reminder >/dev/null 2>&1 || true
+            pm2 start server.js --name reminder --update-env --cwd "$PWD"
+            # 飞书长连接（需出站访问 open.feishu.cn，并配置 FEISHU_APP_*）
+            if [ -f feishu-ws.js ]; then
+              pm2 delete reminder-feishu-ws >/dev/null 2>&1 || true
+              pm2 start feishu-ws.js --name reminder-feishu-ws --update-env --cwd "$PWD"
+            fi
             pm2 save
+            sleep 2
+            curl -sf "http://127.0.0.1:${PORT}/api/health" | head -c 400
+            echo
