@@ -159,6 +159,40 @@ function matchBindIntent(text) {
   return /^(绑定|bind|绑定推送)$/i.test(t);
 }
 
+/**
+ * 结构化问答意图（优先于通用 DeepSeek）
+ * @returns {{ intent: string } | null}
+ */
+function matchQaIntent(text) {
+  const t = String(text || '').trim();
+  if (!t) return null;
+  if (/^(帮助|help|菜单|能做什么|命令)$/i.test(t)) return { intent: 'help' };
+  if (/(今天学什么|每日编程|编程知识|今日课题|学什么)/.test(t)) return { intent: 'learning' };
+  if (/(github|开源热门|热门仓库|今日开源)/i.test(t)) return { intent: 'github' };
+  if (/(科技快讯|今日热点|今日新闻|快讯|今日精选)/.test(t)) return { intent: 'news' };
+  if (/(今天事项|今日事项|今日提醒|有什么事|待办)/.test(t)) return { intent: 'today' };
+  if (/(经期|生理期)/.test(t)) return { intent: 'period' };
+  return null;
+}
+
+async function replyInteractive(messageId, cardBody) {
+  const token = await getTenantAccessToken();
+  const card = cardBody?.card || cardBody;
+  const res = await fetch(`${FEISHU_HOST}/open-apis/im/v1/messages/${encodeURIComponent(messageId)}/reply`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`
+    },
+    body: JSON.stringify({
+      msg_type: 'interactive',
+      content: JSON.stringify(card)
+    })
+  });
+  const json = await res.json();
+  return { ok: json.code === 0, data: json };
+}
+
 async function chatWithDeepSeek(userText, contextNote) {
   const key = process.env.DEEPSEEK_API_KEY;
   if (!key) return { ok: false, text: '还没配置 DEEPSEEK_API_KEY，暂时无法问答。你可以先回复「收到」确认今日事项。' };
@@ -256,8 +290,27 @@ async function handleEvent(body, handlers = {}) {
     return { http: 200, json: { ok: true, action: 'ack', ...result } };
   }
 
+  const qa = matchQaIntent(meta.text);
+  if (qa && handlers.answerQa) {
+    const result = await handlers.answerQa(qa.intent, meta.text);
+    try {
+      if (botConfigured()) {
+        if (result?.card) await replyInteractive(meta.messageId, result.card);
+        else await replyText(meta.messageId, result?.text || '好的。');
+      }
+    } catch (e) {
+      return {
+        http: 200,
+        json: { ok: true, action: 'qa', intent: qa.intent, reply_error: e.message, text: result?.text }
+      };
+    }
+    return { http: 200, json: { ok: true, action: 'qa', intent: qa.intent, card: !!result?.card } };
+  }
+
   let contextNote = '';
-  if (handlers.listPending) {
+  if (handlers.buildChatContext) {
+    contextNote = await handlers.buildChatContext() || '';
+  } else if (handlers.listPending) {
     const pending = await handlers.listPending();
     if (pending?.length) {
       contextNote = `今日尚未确认的事项：${pending.map((p) => p.name).join('、')}。用户也可回复「收到」一键确认。`;
@@ -276,11 +329,13 @@ module.exports = {
   botConfigured,
   getTenantAccessToken,
   replyText,
+  replyInteractive,
   sendInteractiveCard,
   stripMentions,
   parseMessageText,
   matchAckIntent,
   matchBindIntent,
+  matchQaIntent,
   extractChatId,
   chatWithDeepSeek,
   handleEvent,
