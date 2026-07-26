@@ -9,23 +9,29 @@ const DATA_FILE = path.join(DATA_DIR, 'data.json');
 const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 const PORT = process.env.PORT || 3333;
 
+const DEFAULT_CONFIG = {
+  feishu: { enabled: false, webhook_url: '' },
+  serverchan: { enabled: false, sendkey: '' },
+  check_times: ['09:00', '14:00', '21:00'],
+  timezone: 'Asia/Shanghai',
+  users: { admin: { password: 'admin123', label: '管理员' } }
+};
+
 // ─── 工具 ────────────────────────────────────────────
 function readJSON(file) {
   // On Vercel, if file doesn't exist in DATA_DIR, copy from deployment source
-  if (process.env.VERCEL && !require('fs').existsSync(file)) {
+  if (process.env.VERCEL && !fs.existsSync(file)) {
     const srcFile = path.join(__dirname, path.basename(file));
-    if (require('fs').existsSync(srcFile)) {
-      require('fs').copyFileSync(srcFile, file);
+    if (fs.existsSync(srcFile)) {
+      fs.copyFileSync(srcFile, file);
     } else if (path.basename(file) === 'config.json') {
-      // Default config fallback
-      const def = { feishu: { enabled: false, webhook_url: '' }, serverchan: { enabled: false, sendkey: '' }, check_times: ['09:00','14:00','21:00'], timezone: 'Asia/Shanghai', users: { admin: { password: 'admin123', label: '管理员' } } };
-      require('fs').writeFileSync(file, JSON.stringify(def, null, 2), 'utf8');
+      fs.writeFileSync(file, JSON.stringify(DEFAULT_CONFIG, null, 2), 'utf8');
     } else if (path.basename(file) === 'data.json') {
       const seedFile = path.join(__dirname, 'seed.data.json');
-      if (require('fs').existsSync(seedFile)) {
-        require('fs').copyFileSync(seedFile, file);
+      if (fs.existsSync(seedFile)) {
+        fs.copyFileSync(seedFile, file);
       } else {
-        require('fs').writeFileSync(file, '{"events":[],"history":[]}', 'utf8');
+        fs.writeFileSync(file, JSON.stringify({ events: [], history: [] }, null, 2), 'utf8');
       }
     }
   }
@@ -36,13 +42,29 @@ function readJSON(file) {
     return {};
   }
 }
-function loadData() {
-  const data = readJSON(DATA_FILE);
-  if (!Array.isArray(data.events)) data.events = [];
-  if (!Array.isArray(data.history)) data.history = [];
-  return data;
+
+/** Normalize legacy seed (raw array) into { events, history }. */
+function normalizeData(raw) {
+  if (Array.isArray(raw)) return { events: raw, history: [] };
+  const data = raw && typeof raw === 'object' ? raw : {};
+  return {
+    events: Array.isArray(data.events) ? data.events : [],
+    history: Array.isArray(data.history) ? data.history : []
+  };
 }
+
+function loadData() {
+  return normalizeData(readJSON(DATA_FILE));
+}
+
+function saveData(data) {
+  const normalized = normalizeData(data);
+  writeJSON(DATA_FILE, normalized);
+  return normalized;
+}
+
 function writeJSON(file, data) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
 }
 function now(date) {
@@ -246,7 +268,13 @@ async function sendFeishuCard(config, cardBody) {
       body: JSON.stringify(cardBody),
     });
     const text = await res.text();
-    return { ok: res.ok, data: text };
+    let parsed;
+    try { parsed = JSON.parse(text); } catch { parsed = null; }
+    if (parsed && parsed.code && parsed.code !== 0) {
+      return { ok: false, error: parsed.msg || `飞书错误 code=${parsed.code}`, data: text };
+    }
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}`, data: text };
+    return { ok: true, data: text };
   } catch (e) {
     return { ok: false, error: e.message };
   }
@@ -321,7 +349,7 @@ app.post('/api/events', (req, res) => {
   if (!ev.type || !ev.name) return res.status(400).json({ error: 'type 和 name 必填' });
   data.events.push(ev);
   data.history.push({ id: nextId(data.history), eventId: ev.id, action: 'create', detail: `${ev.type}:${ev.name}`, date: dateStr(), ts: Date.now() });
-  writeJSON(DATA_FILE, data);
+  saveData(data);
   res.json(ev);
 });
 
@@ -331,7 +359,7 @@ app.put('/api/events/:id', (req, res) => {
   if (idx === -1) return res.status(404).json({ error: '未找到' });
   data.events[idx] = { ...data.events[idx], ...req.body, id: data.events[idx].id };
   data.history.push({ id: nextId(data.history), eventId: data.events[idx].id, action: 'update', detail: `${data.events[idx].type}:${data.events[idx].name}`, date: dateStr(), ts: Date.now() });
-  writeJSON(DATA_FILE, data);
+  saveData(data);
   res.json(data.events[idx]);
 });
 
@@ -341,7 +369,7 @@ app.delete('/api/events/:id', (req, res) => {
   if (idx === -1) return res.status(404).json({ error: '未找到' });
   const ev = data.events.splice(idx, 1)[0];
   data.history.push({ id: nextId(data.history), eventId: ev.id, action: 'delete', detail: `${ev.type}:${ev.name}`, date: dateStr(), ts: Date.now() });
-  writeJSON(DATA_FILE, data);
+  saveData(data);
   res.json({ ok: true });
 });
 
@@ -391,7 +419,7 @@ app.post('/api/history', (req, res) => {
   const { eventId, action, detail } = req.body || {};
   if (!action || !detail) return res.status(400).json({ error: 'action 和 detail 必填' });
   data.history.push({ id: nextId(data.history), eventId: eventId || 0, action, detail, date: dateStr(), ts: Date.now() });
-  writeJSON(DATA_FILE, data);
+  saveData(data);
   res.json({ ok: true });
 });
 
@@ -410,7 +438,14 @@ app.put('/api/config', (req, res) => {
 
 // ─── 健康检查 ──────────────────────────────────────────
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', time: dateStr(), version: '3.0.0' });
+  const data = loadData();
+  res.json({
+    status: 'ok',
+    time: dateStr(),
+    version: '3.0.1',
+    events: data.events.length,
+    vercel: !!process.env.VERCEL
+  });
 });
 
 // ─── Cron 定时检查（供 cron-job.org 调用）────────────
@@ -441,14 +476,41 @@ app.get('/api/cron/check', async (req, res) => {
  
 // ─── 推送测试 ──────────────────────────────────────────
 app.post('/api/feishu/test', async (req, res) => {
-  const config = readJSON(CONFIG_FILE);
+  const saved = readJSON(CONFIG_FILE);
+  const body = req.body || {};
+  // 允许用请求体覆盖（前端测试时可直接带表单值，避免未保存/实例间丢失）
+  const config = {
+    ...saved,
+    feishu: {
+      ...(saved.feishu || {}),
+      enabled: body.enabled != null ? !!body.enabled : !!saved.feishu?.enabled,
+      webhook_url: body.webhook_url != null ? String(body.webhook_url).trim() : (saved.feishu?.webhook_url || '')
+    }
+  };
+  if (body.persist) {
+    saved.feishu = config.feishu;
+    writeJSON(CONFIG_FILE, saved);
+  }
   const card = buildFeishuCard(dateStr(), [{ message: '✅ 这是一条测试消息' }], '🔔 提醒系统测试');
   const result = await sendFeishuCard(config, card);
   res.json(result);
 });
 
 app.post('/api/serverchan/test', async (req, res) => {
-  const config = readJSON(CONFIG_FILE);
+  const saved = readJSON(CONFIG_FILE);
+  const body = req.body || {};
+  const config = {
+    ...saved,
+    serverchan: {
+      ...(saved.serverchan || {}),
+      enabled: body.enabled != null ? !!body.enabled : !!saved.serverchan?.enabled,
+      sendkey: body.sendkey != null ? String(body.sendkey).trim() : (saved.serverchan?.sendkey || '')
+    }
+  };
+  if (body.persist) {
+    saved.serverchan = config.serverchan;
+    writeJSON(CONFIG_FILE, saved);
+  }
   const result = await sendServerchan(config, '🔔 提醒系统测试', '这是一条来自日常提醒系统的测试消息\n\n如果收到这条消息，说明配置正确 ✅');
   res.json(result);
 });
