@@ -39,4 +39,6 @@ jobs:
             cd ${{ secrets.REMOTE_DIR || '/opt/reminder' }}
             npm install
             pm2 restart reminder || pm2 start server.js --name reminder
+            # 飞书长连接（需服务器能出站访问 open.feishu.cn，并配置 FEISHU_APP_*）
+            pm2 restart reminder-feishu-ws || pm2 start feishu-ws.js --name reminder-feishu-ws
             pm2 save
