@@ -57,6 +57,7 @@ const {
   buildServerchanBody,
   normalizeEventInput,
   logPeriodStart,
+  predictPeriod,
   parseHHMM,
   plannedTimeLabel,
   isAcked,
@@ -642,7 +643,7 @@ app.get('/api/health', async (req, res) => {
     res.json({
       status: 'ok',
       time: dateStr(),
-      version: '4.1.13',
+      version: '4.1.14',
       brand: BRAND.name,
       app_url: APP_URL,
       deepseek: { configured: !!process.env.DEEPSEEK_API_KEY },
@@ -1051,6 +1052,26 @@ app.get('/api/ledger', async (req, res) => {
   }
 });
 
+function periodHistoryRows(sched) {
+  const starts = (Array.isArray(sched?.cycle_history) ? sched.cycle_history : [])
+    .map(String)
+    .filter(Boolean)
+    .sort();
+  const rows = [];
+  for (let i = 0; i < starts.length; i++) {
+    let gap_days = null;
+    if (i > 0) {
+      const a = new Date(`${starts[i - 1]}T00:00:00`);
+      const b = new Date(`${starts[i]}T00:00:00`);
+      if (!Number.isNaN(a.getTime()) && !Number.isNaN(b.getTime())) {
+        gap_days = Math.round((b - a) / 86400000);
+      }
+    }
+    rows.push({ start: starts[i], gap_days });
+  }
+  return rows.slice(-6).reverse();
+}
+
 app.get('/api/events/:id/detail', async (req, res) => {
   try {
     const data = await loadData();
@@ -1060,7 +1081,14 @@ app.get('/api/events/:id/detail', async (req, res) => {
     const n = now();
     const check = checkEvent(ev, n);
     const history = ledger.listByItem(data.push_ledger, id);
-    res.json({ item: ev, check, push_history: history, brand: BRAND });
+    let period = null;
+    if (ev.type === 'period') {
+      period = {
+        forecast: predictPeriod(ev.schedule || {}, n),
+        history: periodHistoryRows(ev.schedule || {})
+      };
+    }
+    res.json({ item: ev, check, push_history: history, period, brand: BRAND });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
