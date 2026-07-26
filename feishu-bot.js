@@ -53,12 +53,22 @@ async function replyText(messageId, text) {
   return { ok: json.code === 0, data: json };
 }
 
+/** 去掉群聊 @机器人 / @_user_1，便于识别「收到」 */
+function stripMentions(text) {
+  return String(text || '')
+    .replace(/@_user_\w+/gi, ' ')
+    .replace(/@_all\b/gi, ' ')
+    .replace(/@[^\s@]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function parseMessageText(event) {
   try {
     const msg = event?.event?.message || event?.message || {};
     if (msg.message_type && msg.message_type !== 'text') return '';
     const raw = typeof msg.content === 'string' ? JSON.parse(msg.content) : (msg.content || {});
-    return String(raw.text || '').trim();
+    return stripMentions(raw.text || '');
   } catch {
     return '';
   }
@@ -184,6 +194,7 @@ module.exports = {
   botConfigured,
   getTenantAccessToken,
   replyText,
+  stripMentions,
   parseMessageText,
   matchAckIntent,
   chatWithDeepSeek,
