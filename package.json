@@ -1,6 +1,6 @@
 {
   "name": "nudge",
-  "version": "4.1.10",
+  "version": "4.1.11",
   "description": "Nudge — 轻推一下，刚好想起",
   "main": "server.js",
   "scripts": {

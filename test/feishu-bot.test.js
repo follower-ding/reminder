@@ -1,6 +1,12 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { matchAckIntent, parseMessageText, stripMentions, handleEvent } = require('../feishu-bot');
+const {
+  matchAckIntent,
+  parseMessageText,
+  stripMentions,
+  handleEvent,
+  sendInteractiveCard
+} = require('../feishu-bot');
 
 describe('feishu bot intents', () => {
   it('matches ack phrases', () => {
@@ -38,6 +44,12 @@ describe('feishu bot intents', () => {
     const r = await handleEvent({ type: 'url_verification', challenge: 'abc', token: '' });
     assert.equal(r.http, 200);
     assert.equal(r.json.challenge, 'abc');
+  });
+
+  it('sendInteractiveCard requires chat_id', async () => {
+    const r = await sendInteractiveCard('', { card: { elements: [] } });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /chat_id|receive_id/);
   });
 
   it('acks via handler without requiring live Feishu credentials', async () => {
