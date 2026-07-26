@@ -588,19 +588,25 @@ async function renderSubscribe(el) {
   const ghTime = d.github?.push_time || "";
   const newsTime = d.news?.push_time || "";
   const learnTime = d.learning?.push_time || "";
+  const newsFeeds = (Array.isArray(d.news?.feeds) && d.news.feeds.length
+    ? d.news.feeds
+    : ["https://hnrss.org/frontpage"]).join("\n");
+  const learnTopics = (Array.isArray(d.learning?.topics) && d.learning.topics.length
+    ? d.learning.topics
+    : ["前端", "算法", "Git", "HTTP"]).join("、");
   el.innerHTML = `
     <div class="hero">
       <div>
         <div class="eyebrow">Digest</div>
         <h2>订阅</h2>
-        <p class="sub">每个来源单独一张飞书卡 · 可选 AI 导读</p>
+        <p class="sub">可配置主题与 RSS · 飞书可问「今天学什么」</p>
       </div>
     </div>
     <div class="nudge-card digest-card" style="margin-bottom:1rem">
       <div class="toggle-row"><span><strong>启用订阅推送</strong></span><div class="toggle ${d.enabled !== false ? "on" : ""}" id="tog-dig"></div></div>
       <div class="toggle-row"><span>AI 导读（DeepSeek）</span><div class="toggle ${d.ai_summary !== false ? "on" : ""}" id="tog-ai"></div></div>
       <div class="form-group"><label>默认推送时刻（各源未单独设置时使用）</label><input id="dig-time" type="time" value="${esc(d.push_time || "20:00")}"></div>
-      <p class="form-hint">GitHub / 快讯 / 学习会各发一张卡，不与事项合并。需已配置 DEEPSEEK_API_KEY 才会写导读。</p>
+      <p class="form-hint">到点各源单独推卡。飞书也可说「今天学什么 / GitHub / 科技快讯 / 帮助」。</p>
     </div>
     <div class="section-title"><h3>来源（分模块）</h3></div>
     <div class="source-grid">
@@ -619,6 +625,7 @@ async function renderSubscribe(el) {
         </div>
         <div class="toggle-row"><span class="form-hint">AI 导读+为什么</span><div class="toggle ${d.news?.ai !== false ? "on" : ""}" id="tog-news-ai"></div></div>
         <div class="form-group"><label>本源时刻（可空=用默认）</label><input id="news-time" type="time" value="${esc(newsTime)}"></div>
+        <div class="form-group"><label>RSS 源（每行一个 URL）</label><textarea id="news-feeds" rows="3" placeholder="https://hnrss.org/frontpage">${esc(newsFeeds)}</textarea></div>
       </div>
       <div class="nudge-card source-card digest-card">
         <div class="toggle-row">
@@ -627,6 +634,8 @@ async function renderSubscribe(el) {
         </div>
         <div class="toggle-row"><span class="form-hint">AI 扩写讲解</span><div class="toggle ${d.learning?.ai !== false ? "on" : ""}" id="tog-learn-ai"></div></div>
         <div class="form-group"><label>本源时刻（可空=用默认）</label><input id="learn-time" type="time" value="${esc(learnTime)}"></div>
+        <div class="form-group"><label>编程主题偏好（用顿号或逗号分隔）</label><input id="learn-topics" value="${esc(learnTopics)}" placeholder="前端、算法、Git、HTTP"></div>
+        <p class="form-hint">可选：前端 / 后端 / 算法 / Git / JavaScript / TypeScript 等，用于轮换课题池。</p>
       </div>
     </div>
     <button class="btn-primary btn-small" id="save-sub" type="button" style="margin:1rem 0">保存订阅</button>
@@ -651,6 +660,18 @@ async function renderSubscribe(el) {
     if (node) node.onclick = function () { this.classList.toggle("on"); };
   });
   document.getElementById("save-sub").onclick = async () => {
+    const parseTopics = (raw) => String(raw || "")
+      .split(/[,，、\s]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 12);
+    const parseFeeds = (raw) => String(raw || "")
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter((s) => /^https?:\/\//i.test(s))
+      .slice(0, 8);
+    const topics = parseTopics(document.getElementById("learn-topics").value);
+    const feeds = parseFeeds(document.getElementById("news-feeds").value);
     const c = await api("/config");
     c.digests = {
       ...(c.digests || {}),
@@ -667,13 +688,15 @@ async function renderSubscribe(el) {
         ...(c.digests?.news || {}),
         enabled: document.getElementById("tog-news").classList.contains("on"),
         ai: document.getElementById("tog-news-ai").classList.contains("on"),
-        push_time: document.getElementById("news-time").value || ""
+        push_time: document.getElementById("news-time").value || "",
+        feeds: feeds.length ? feeds : ["https://hnrss.org/frontpage"]
       },
       learning: {
         ...(c.digests?.learning || {}),
         enabled: document.getElementById("tog-learn").classList.contains("on"),
         ai: document.getElementById("tog-learn-ai").classList.contains("on"),
-        push_time: document.getElementById("learn-time").value || ""
+        push_time: document.getElementById("learn-time").value || "",
+        topics: topics.length ? topics : ["前端", "算法", "Git", "HTTP"]
       }
     };
     await api("/config", { method: "PUT", body: JSON.stringify(c) });
@@ -691,7 +714,7 @@ async function renderSettings(el) {
     <div class="card-grid">
       <div class="nudge-card">
         <div class="toggle-row"><span><strong>DeepSeek</strong></span><span class="badge ${config.deepseek?.configured ? "ok" : "fail"}">${config.deepseek?.configured ? "已配置" : "未配置"}</span></div>
-        <p class="form-hint">问答在飞书机器人里完成。Key 仅读环境变量 DEEPSEEK_API_KEY。</p>
+        <p class="form-hint">飞书可说「帮助 / 今天学什么 / GitHub / 科技快讯 / 今天事项」。Key 仅读 DEEPSEEK_API_KEY。</p>
       </div>
       <div class="nudge-card">
         <h3 style="margin-bottom:.7rem">飞书推送（应用机器人）</h3>

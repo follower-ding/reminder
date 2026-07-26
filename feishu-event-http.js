@@ -1,12 +1,13 @@
 /**
- * 飞书事件业务处理（确认收到 / DeepSeek 对话）
+ * 飞书事件业务处理（确认收到 / 结构化问答 / DeepSeek 对话）
  */
 const feishuBot = require('./feishu-bot');
 const store = require('./store');
 const engine = require('./engine');
+const { getDigestBundle } = require('./digest');
 
 const { loadData, saveData, loadConfig, saveConfig } = store;
-const { migrateEvents, checkEvent, isAcked, ackEvent } = engine;
+const { migrateEvents, checkEvent, isAcked, ackEvent, buildFeishuCard, predictPeriod } = engine;
 
 function dateStr(tz = 'Asia/Shanghai') {
   const d = new Date();
@@ -129,13 +130,128 @@ async function rememberChatIdFromEvent(body) {
   }
 }
 
+function helpText(brand) {
+  return [
+    `我是 ${brand}，飞书里可以这样说：`,
+    '• 收到 — 确认今日事项',
+    '• 今天事项 — 列出待确认',
+    '• 今天学什么 — 推送今日编程精读卡',
+    '• GitHub / 科技快讯 — 推送对应精选卡',
+    '• 经期要注意什么 — 结合周期问答',
+    '• 绑定 — 记下推送群 chat_id',
+    '• 帮助 — 再看一遍菜单',
+    '',
+    '也可以直接问别的，我会结合今日事项与订阅摘要回答。'
+  ].join('\n');
+}
+
+async function periodContextNote() {
+  const data = await loadData();
+  const n = nowParts();
+  const lines = [];
+  for (const raw of migrateEvents(data.events)) {
+    if (!raw.enabled || raw.type !== 'period') continue;
+    const pred = predictPeriod(raw.schedule || {}, n);
+    if (!pred) continue;
+    lines.push(
+      `经期「${raw.name}」：周期约 ${pred.cycle_length || '—'} 天，当前第 ${pred.day_in_cycle} 天`
+      + (pred.in_period ? '（经期内）' : `，距下次约 ${pred.days_to_next ?? '—'} 天`)
+      + `，置信度 ${pred.confidence || '—'}`
+    );
+  }
+  return lines.join('；');
+}
+
+async function buildChatContext() {
+  const parts = [];
+  const pending = await listPendingToday();
+  if (pending.length) {
+    parts.push(`今日尚未确认：${pending.map((p) => p.name).join('、')}。可回复「收到」确认。`);
+  }
+  const period = await periodContextNote();
+  if (period) parts.push(period);
+  try {
+    const config = await loadConfig();
+    if (config.digests?.enabled !== false) {
+      const bundle = await getDigestBundle(config, dateStr(), { withAI: false });
+      for (const sec of (bundle.sections || []).slice(0, 3)) {
+        const titles = (sec.items || []).slice(0, 2).map((it) => it.title).filter(Boolean);
+        if (titles.length) parts.push(`${sec.title}摘要：${titles.join('；')}`);
+      }
+    }
+  } catch {
+    /* ignore digest errors in chat context */
+  }
+  parts.push('若用户问订阅内容，可建议说「今天学什么」「GitHub」「科技快讯」。');
+  return parts.join('\n');
+}
+
+async function answerQa(intent, userText) {
+  const config = await loadConfig();
+  const brand = config.brand?.name || 'Nudge';
+  const today = dateStr();
+  const appUrl = process.env.APP_URL || '';
+
+  if (intent === 'help') return { text: helpText(brand) };
+
+  if (intent === 'today') {
+    const pending = await listPendingToday();
+    if (!pending.length) return { text: '今天没有待确认的事项，都搞定了。' };
+    const lines = pending.map((p) => `• ${p.name}${p.message ? `：${p.message}` : ''}`);
+    return { text: `今日待确认（${pending.length}）：\n${lines.join('\n')}\n\n回「收到」可一键确认。` };
+  }
+
+  if (intent === 'period') {
+    const note = await periodContextNote();
+    const context = [
+      note || '用户可能关心经期，但当前没有启用的经期事项。',
+      '回答要温和、非医疗诊断；可给休息/补水/记录建议。',
+      '今日待确认事项也可顺带提醒。'
+    ].join('\n');
+    const chat = await feishuBot.chatWithDeepSeek(userText || '经期要注意什么', context);
+    return { text: chat.text };
+  }
+
+  if (intent === 'learning' || intent === 'github' || intent === 'news') {
+    const labels = { learning: '每日编程', github: 'GitHub 热门', news: '科技快讯' };
+    if (config.digests?.enabled === false || config.digests?.[intent]?.enabled === false) {
+      return { text: `「${labels[intent]}」未开启。请到网页「订阅」打开该源后，再说一次。` };
+    }
+    try {
+      const bundle = await getDigestBundle(config, today, { withAI: config.digests?.ai_summary !== false });
+      const sec = (bundle.sections || []).find((s) => s.id === intent);
+      if (!sec?.pushItems?.length) {
+        return { text: `「${labels[intent]}」暂无内容（抓取失败或为空）。可稍后再试，或在订阅页看预览。` };
+      }
+      const title = `${brand} · ${sec.title}`;
+      const cardBody = buildFeishuCard(today, sec.pushItems, title, appUrl, brand);
+      const preview = String(sec.pushItems[0].message || '').slice(0, 400);
+      return { text: preview, card: cardBody };
+    } catch (e) {
+      return { text: `拉取「${labels[intent]}」失败：${e.message}` };
+    }
+  }
+
+  return { text: '我没太理解。回「帮助」看可用指令。' };
+}
+
 async function handleFeishuHttp(body) {
   await rememberChatIdFromEvent(body);
   return feishuBot.handleEvent(body || {}, {
     ackToday: ackTodayFromBot,
     listPending: listPendingToday,
-    bindChat: async (chatId) => rememberChatId(chatId || feishuBot.extractChatId(body || {}))
+    bindChat: async (chatId) => rememberChatId(chatId || feishuBot.extractChatId(body || {})),
+    answerQa,
+    buildChatContext
   });
 }
 
-module.exports = { handleFeishuHttp, ackTodayFromBot, listPendingToday, rememberChatId };
+module.exports = {
+  handleFeishuHttp,
+  ackTodayFromBot,
+  listPendingToday,
+  rememberChatId,
+  answerQa,
+  buildChatContext,
+  helpText
+};

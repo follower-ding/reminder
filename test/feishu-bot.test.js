@@ -3,12 +3,14 @@ const assert = require('node:assert/strict');
 const {
   matchAckIntent,
   matchBindIntent,
+  matchQaIntent,
   parseMessageText,
   stripMentions,
   handleEvent,
   sendInteractiveCard,
   extractChatId
 } = require('../feishu-bot');
+const { helpText } = require('../feishu-event-http');
 
 describe('feishu bot intents', () => {
   it('matches ack phrases', () => {
@@ -84,6 +86,42 @@ describe('feishu bot intents', () => {
     assert.equal(r.json.action, 'bind');
     assert.equal(bound, 'oc_group1');
     assert.equal(r.json.chat_id, 'oc_group1');
+  });
+
+  it('matches structured qa intents', () => {
+    assert.deepEqual(matchQaIntent('帮助'), { intent: 'help' });
+    assert.deepEqual(matchQaIntent('今天学什么'), { intent: 'learning' });
+    assert.deepEqual(matchQaIntent('GitHub 有啥'), { intent: 'github' });
+    assert.deepEqual(matchQaIntent('科技快讯'), { intent: 'news' });
+    assert.deepEqual(matchQaIntent('今天事项'), { intent: 'today' });
+    assert.deepEqual(matchQaIntent('经期要注意什么'), { intent: 'period' });
+    assert.equal(matchQaIntent('随便聊聊天气'), null);
+    assert.match(helpText('Nudge'), /今天学什么/);
+  });
+
+  it('routes qa intent to answerQa handler', async () => {
+    let got = null;
+    const r = await handleEvent(
+      {
+        header: { event_type: 'im.message.receive_v1' },
+        event: {
+          message: {
+            message_id: 'om_qa',
+            message_type: 'text',
+            content: JSON.stringify({ text: '今天学什么' })
+          }
+        }
+      },
+      {
+        answerQa: async (intent) => {
+          got = intent;
+          return { text: 'lesson ok' };
+        }
+      }
+    );
+    assert.equal(got, 'learning');
+    assert.equal(r.json.action, 'qa');
+    assert.equal(r.json.intent, 'learning');
   });
 
   it('acks via handler without requiring live Feishu credentials', async () => {
