@@ -1,6 +1,7 @@
-/* Nudge v4.1.1 — Today overview + space list; ack/chat in Feishu */
+/* Nudge v4.1.2 — Today polish + space list; ack/chat in Feishu */
 const API = "/api";
 const BRAND = { name: "Nudge", tagline: "轻推一下，刚好想起" };
+const HINT_KEY = "nudge_hide_feishu_hint";
 let token = localStorage.getItem("nudge_token") || localStorage.getItem("reminder_token") || "";
 let currentUser = null;
 let currentView = "today";
@@ -15,9 +16,9 @@ const SPACE_META = {
   task: { label: "待办", hint: "临时一次", badge: "task" }
 };
 const TYPE_META = {
-  birthday: { icon: "🎂", label: "生日" },
-  period: { icon: "🩸", label: "经期" },
-  custom: { icon: "📌", label: "自定义" }
+  birthday: { label: "生日" },
+  period: { label: "经期" },
+  custom: { label: "事项" }
 };
 const HABIT_TEMPLATES = [
   { id: "study", label: "每日学习", name: "每日学习", mode: "daily", time: "08:00", message: "开始今日学习" },
@@ -61,7 +62,43 @@ function spaceBadge(space) {
   const m = SPACE_META[space] || SPACE_META.habit;
   return `<span class="badge ${m.badge}">${m.label}</span>`;
 }
-function typeLabel(t) { return TYPE_META[t]?.label || "自定义"; }
+function typeLabel(t) { return TYPE_META[t]?.label || "事项"; }
+function cleanText(s) {
+  return String(s ?? "").replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "").replace(/\s{2,}/g, " ").trim();
+}
+function formatDateCN(ymd) {
+  const m = String(ymd || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return ymd || "";
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  const week = ["日", "一", "二", "三", "四", "五", "六"][d.getDay()];
+  return `${+m[2]}月${+m[3]}日 周${week}`;
+}
+function labelFromToken(t) {
+  try {
+    const part = String(t || "").split(".")[0];
+    if (!part) return "已登录";
+    const b64 = part.replace(/-/g, "+").replace(/_/g, "/");
+    const pad = b64 + "===".slice((b64.length + 3) % 4);
+    const data = JSON.parse(decodeURIComponent(escape(atob(pad))));
+    return data.l || data.u || "已登录";
+  } catch { return "已登录"; }
+}
+function skeletonBlocks(n = 3) {
+  return `<div class="skel-list">${Array.from({ length: n }, () => `<div class="skel-card"><div class="skel-line w60"></div><div class="skel-line w40"></div><div class="skel-line w80"></div></div>`).join("")}</div>`;
+}
+function groupPending(list) {
+  const map = new Map();
+  for (const r of list || []) {
+    const key = `${r.name || ""}|${r.message || ""}|${r.space || ""}`;
+    if (!map.has(key)) map.set(key, { ...r, _count: 1, _ids: [r.eventId] });
+    else {
+      const g = map.get(key);
+      g._count += 1;
+      g._ids.push(r.eventId);
+    }
+  }
+  return [...map.values()];
+}
 function closeModal() { document.querySelectorAll(".modal-overlay").forEach((m) => m.remove()); }
 function openModal(html, center = true) {
   closeModal();
@@ -119,7 +156,7 @@ function logout(redirect = true) {
 function showApp() {
   document.getElementById("login-screen").style.display = "none";
   document.getElementById("app").style.display = "block";
-  document.getElementById("user-label").textContent = currentUser?.label || "";
+  document.getElementById("user-label").textContent = currentUser?.label || labelFromToken(token) || "";
   renderView(currentView);
 }
 async function consumeAckQuery() {
@@ -136,7 +173,7 @@ async function boot() {
     // /api/health 不校验登录；用 /config 验证 token，避免「假登录」后白屏
     const cfg = await api("/config");
     if (cfg.error) throw new Error(cfg.error);
-    currentUser = { label: cfg.brand?.name ? "已登录" : "已登录" };
+    currentUser = { label: labelFromToken(token) };
     await consumeAckQuery();
     showApp();
   } catch {
@@ -165,33 +202,51 @@ function openDetail(id) {
 }
 
 async function renderToday(el) {
-  el.innerHTML = `<div class="empty-state"><p>加载中…</p></div>`;
+  el.innerHTML = skeletonBlocks(3);
   const [dash, cfg] = await Promise.all([api("/dashboard"), api("/config")]);
   if (dash.error) { el.innerHTML = `<div class="empty-state"><p>${esc(dash.error)}</p></div>`; return; }
   const pending = dash.pending || dash.today || [];
   const done = dash.done || [];
+  const grouped = groupPending(pending);
+  const total = pending.length + done.length;
+  const pct = total ? Math.round((done.length / total) * 100) : 0;
   const feishuOn = !!cfg.feishu?.enabled;
   const botOn = !!cfg.feishu?.bot_configured;
+  const hideHint = localStorage.getItem(HINT_KEY) === "1";
   const subtitle = pending.length
-    ? `今日 ${pending.length} 件 · 在飞书回复「收到」确认`
+    ? `还有 ${pending.length} 件 · 飞书回「收到」即可确认`
     : (done.length ? "今天都搞定了" : "今天没有待办，留白也好");
+
+  let hint = "";
+  if (!hideHint) {
+    if (!feishuOn) {
+      hint = `<div class="hint-banner" id="feishu-hint">要收到推送，请到「设置」打开飞书 Webhook。<button type="button" class="hint-dismiss" data-dismiss-hint aria-label="关闭提示">关闭</button></div>`;
+    } else {
+      hint = `<div class="hint-banner soft" id="feishu-hint">确认与问答在飞书完成：私聊机器人回「收到」，或直接聊天提问。<button type="button" class="hint-dismiss" data-dismiss-hint aria-label="关闭提示">知道了</button></div>`;
+    }
+  }
 
   el.innerHTML = `
     <div class="hero today-hero">
       <div>
-        <div class="eyebrow">${esc(dash.date || "")}</div>
+        <div class="eyebrow">${esc(formatDateCN(dash.date))}</div>
         <h2>今日</h2>
         <p class="sub">${esc(subtitle)}</p>
       </div>
       ${!feishuOn ? `<span class="badge fail">飞书未启用</span>` : botOn ? `<span class="badge ok">飞书机器人</span>` : `<span class="badge ok">飞书推送</span>`}
     </div>
-    ${!feishuOn ? `<div class="hint-banner">要收到推送，请到「设置」打开飞书 Webhook。</div>` : `
-      <div class="hint-banner soft">确认与问答都在飞书完成：回复「收到」确认今日事项；直接聊天即可问 DeepSeek。</div>`}
+    ${total ? `
+      <div class="progress-wrap" aria-label="今日进度">
+        <div class="progress-meta"><span>已确认 ${done.length}/${total}</span><span>${pct}%</span></div>
+        <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
+      </div>` : ""}
+    ${hint}
     <div class="today-list">
-      ${pending.length ? pending.map((r) => pendingCard(r)).join("") : `
+      ${grouped.length ? grouped.map((r, i) => pendingCard(r, i)).join("") : `
         <div class="empty-done">
           <div class="empty-ico" aria-hidden="true">✓</div>
           <p>${done.length ? "今天都搞定了" : "今天没有待办"}</p>
+          <p class="form-hint">可在「清单」添加习惯或待办</p>
         </div>`}
     </div>
     ${done.length ? `
@@ -203,21 +258,31 @@ async function renderToday(el) {
       <div class="section-title soft"><h3>即将到来</h3></div>
       <div class="upcoming-list">${dash.upcoming.map((r) => upcomingRow(r)).join("")}</div>` : ""}
   `;
+  el.querySelectorAll("[data-dismiss-hint]").forEach((b) => {
+    b.onclick = () => {
+      localStorage.setItem(HINT_KEY, "1");
+      document.getElementById("feishu-hint")?.remove();
+    };
+  });
   el.querySelectorAll("[data-open]").forEach((n) => {
     n.addEventListener("click", () => openDetail(+n.dataset.open));
   });
 }
 
-function pendingCard(r) {
+function pendingCard(r, idx = 0) {
   const space = r.space || "habit";
-  return `<article class="action-card ${esc(space)} ${esc(r.type || "")}" data-open="${r.eventId || ""}">
+  const count = r._count > 1 ? `<span class="badge soft-count">×${r._count}</span>` : "";
+  const msg = cleanText(r.message || "");
+  return `<article class="action-card ${esc(space)} ${esc(r.type || "")}" data-open="${r.eventId || ""}" style="animation-delay:${Math.min(idx, 8) * 40}ms">
+    <div class="action-rail" aria-hidden="true"></div>
     <div class="action-main">
       <div class="action-top">
-        <h3>${esc(r.name || "")}</h3>
+        <h3>${esc(r.name || "")}${count}</h3>
         ${spaceBadge(space)}
       </div>
       <p class="action-meta">${r.time ? esc(r.time) + " · " : ""}${esc(typeLabel(r.type))}</p>
-      <p class="action-body">${esc(r.message || "")}</p>
+      ${msg ? `<p class="action-body">${esc(msg)}</p>` : ""}
+      <p class="action-go">查看详情</p>
     </div>
   </article>`;
 }
@@ -226,7 +291,7 @@ function doneCard(r) {
     <span class="done-check" aria-hidden="true">✓</span>
     <div>
       <div class="done-name">${esc(r.name || "")}</div>
-      <div class="form-hint">${esc(r.message || "")}</div>
+      <div class="form-hint">${esc(cleanText(r.message || ""))}</div>
     </div>
   </div>`;
 }
@@ -238,7 +303,7 @@ function upcomingRow(r) {
 }
 
 async function renderEvents(el) {
-  el.innerHTML = `<div class="empty-state"><p>加载中…</p></div>`;
+  el.innerHTML = skeletonBlocks(4);
   const events = await api("/events");
   if (!Array.isArray(events)) { el.innerHTML = `<div class="empty-state"><p>${esc(events.error)}</p></div>`; return; }
   const enabled = events.filter((e) => e.enabled);
@@ -250,9 +315,9 @@ async function renderEvents(el) {
   el.innerHTML = `
     <div class="hero">
       <div>
-        <div class="eyebrow">List</div>
-        <h2>清单</h2>
-        <p class="sub">${esc(SPACE_META[spaceFilter].hint)}</p>
+        <div class="eyebrow">清单</div>
+        <h2>${SPACE_META[spaceFilter].label}</h2>
+        <p class="sub">${esc(SPACE_META[spaceFilter].hint)} · 共 ${filtered.length} 项</p>
       </div>
       <button class="btn-secondary btn-small" id="toggle-batch" type="button">批量</button>
     </div>
@@ -797,8 +862,12 @@ function setupEventForm(modal, ev, spaceHint) {
   };
 }
 
-document.getElementById("login-btn").onclick = login;
-document.getElementById("login-pass").addEventListener("keydown", (e) => { if (e.key === "Enter") login(); });
+const loginForm = document.getElementById("login-form");
+if (loginForm) loginForm.addEventListener("submit", (e) => { e.preventDefault(); login(); });
+else {
+  document.getElementById("login-btn").onclick = login;
+  document.getElementById("login-pass").addEventListener("keydown", (e) => { if (e.key === "Enter") login(); });
+}
 document.getElementById("logout-btn").onclick = () => logout(true);
 document.getElementById("fab-add").onclick = () => {
   if (currentView === "events") showEventForm(null, spaceFilter);
