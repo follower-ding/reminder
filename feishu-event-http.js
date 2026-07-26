@@ -7,7 +7,20 @@ const engine = require('./engine');
 const { getDigestBundle } = require('./digest');
 
 const { loadData, saveData, loadConfig, saveConfig } = store;
-const { migrateEvents, checkEvent, isAcked, ackEvent, buildFeishuCard, predictPeriod } = engine;
+const {
+  migrateEvents,
+  checkEvent,
+  isAcked,
+  ackEvent,
+  buildFeishuCard,
+  buildAckedCard,
+  predictPeriod,
+  verifyAckSig
+} = engine;
+
+function tokenSecret() {
+  return process.env.TOKEN_SECRET || 'reminder-hmac-v1-change-me';
+}
 
 function dateStr(tz = 'Asia/Shanghai') {
   const d = new Date();
@@ -235,7 +248,80 @@ async function answerQa(intent, userText) {
   return { text: '我没太理解。回「帮助」看可用指令。' };
 }
 
+function parseActionValue(raw) {
+  let value = raw;
+  if (typeof value === 'string') {
+    try { value = JSON.parse(value); } catch { value = {}; }
+  }
+  return value && typeof value === 'object' ? value : {};
+}
+
+/**
+ * 飞书卡片按钮回调（card.action.trigger）
+ * 必须在 3s 内返回 toast / card，供长连接或 HTTP 回传。
+ */
+async function handleCardAction(data) {
+  const action = data?.action || data?.event?.action || {};
+  const value = parseActionValue(action.value);
+  const brand = (await loadConfig()).brand?.name || 'Nudge';
+  const appUrl = process.env.APP_URL || '';
+
+  if (value.action !== 'ack') {
+    return {
+      toast: { type: 'info', content: '未识别的操作', i18n: { zh_cn: '未识别的操作' } }
+    };
+  }
+
+  const eventId = parseInt(value.id, 10);
+  const date = String(value.date || dateStr()).slice(0, 10);
+  const sig = String(value.sig || '');
+  if (!Number.isFinite(eventId) || !verifyAckSig(eventId, date, sig, tokenSecret())) {
+    return {
+      toast: { type: 'error', content: '确认失败：签名无效', i18n: { zh_cn: '确认失败：签名无效' } }
+    };
+  }
+
+  const dataStore = await loadData();
+  const ev = (dataStore.events || []).find((e) => e.id === eventId);
+  if (!ev) {
+    return {
+      toast: { type: 'error', content: '事项不存在或已删除', i18n: { zh_cn: '事项不存在或已删除' } }
+    };
+  }
+
+  if (isAcked(ev, date)) {
+    return {
+      toast: { type: 'info', content: `「${ev.name}」今日已确认过`, i18n: { zh_cn: `「${ev.name}」今日已确认过` } },
+      card: {
+        type: 'raw',
+        data: buildAckedCard(date, [ev.name], brand, appUrl)
+      }
+    };
+  }
+
+  dataStore.events = dataStore.events.map((e) => (e.id === eventId ? ackEvent(e, date, 'feishu-card') : e));
+  await saveData(dataStore);
+
+  return {
+    toast: {
+      type: 'success',
+      content: `已确认：${ev.name}`,
+      i18n: { zh_cn: `已确认：${ev.name}` }
+    },
+    card: {
+      type: 'raw',
+      data: buildAckedCard(date, [ev.name], brand, appUrl)
+    }
+  };
+}
+
 async function handleFeishuHttp(body) {
+  const eventType = body?.header?.event_type || body?.type;
+  if (eventType === 'card.action.trigger') {
+    const result = await handleCardAction(body);
+    return { http: 200, json: result };
+  }
+
   await rememberChatIdFromEvent(body);
   return feishuBot.handleEvent(body || {}, {
     ackToday: ackTodayFromBot,
@@ -248,6 +334,7 @@ async function handleFeishuHttp(body) {
 
 module.exports = {
   handleFeishuHttp,
+  handleCardAction,
   ackTodayFromBot,
   listPendingToday,
   rememberChatId,

@@ -90,16 +90,19 @@ describe('ack deeplink + archive + unack', () => {
     assert.equal(task.enabled, true);
   });
 
-  it('feishu card embeds signed ack links for items', () => {
-    const url = buildAckUrl('https://example.com', 9, '2026-07-27', 'feishu', 's');
+  it('feishu card uses callback buttons without jump url for ack', () => {
+    const { buildAckValue } = require('../engine');
+    const value = buildAckValue(9, '2026-07-27', 's');
     const card = buildFeishuCard('2026-07-27', [
-      { type: 'custom', name: '吃药', message: '记得吃药', eventId: 9, ackUrl: url }
+      { type: 'custom', name: '吃药', message: '记得吃药', eventId: 9, ackValue: value }
     ], 'Nudge · 今日事项', 'https://example.com');
     const raw = JSON.stringify(card);
     assert.match(raw, /已收到/);
-    assert.match(raw, /\/api\/ack\/9\//);
     assert.match(raw, /吃药/);
-    assert.match(raw, /"url":"https:\/\/example.com\/api\/ack\/9\//);
+    assert.match(raw, /"type":"callback"/);
+    assert.match(raw, /"action":"ack"/);
+    assert.doesNotMatch(raw, /\/api\/ack\/9\//);
+    assert.doesNotMatch(raw, /\[已收到\]\(/);
   });
 
   let server;
