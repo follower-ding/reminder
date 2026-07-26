@@ -1,0 +1,10 @@
+{
+  "start": "node server.js",
+  "build": {
+    "command": "npm install"
+  },
+  "env": {
+    "NODE_ENV": "production",
+    "PORT": "3333"
+  }
+}

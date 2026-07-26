@@ -1,0 +1,17 @@
+{
+  "name": "daily-reminder",
+  "version": "3.0.0",
+  "description": "☀️ 日常提醒系统 — 轻量级、可自托管的提醒服务平台",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "reminder": "node reminder.js",
+    "test": "node --test test/*.js"
+  },
+  "keywords": ["reminder", "feishu", "serverchan", "pwa"],
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}
