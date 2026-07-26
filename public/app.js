@@ -391,9 +391,21 @@ async function renderSettings(el) {
         <button class="btn-primary btn-small" id="save-other">保存</button>
       </div>
     </div>
+    <div class="card">
+      <div class="config-section">
+        <h3>测试数据 / 推送联调</h3>
+        <p style="font-size:.82rem;color:var(--text2);margin-bottom:10px">加载「今日必推」测试事件，用于验证飞书 / Server酱。清空不会删配置。</p>
+        <div style="display:flex;flex-wrap:wrap;gap:8px">
+          <button class="btn-primary btn-small" id="demo-push-load">加载推送测试数据</button>
+          <button class="btn-secondary btn-small" id="demo-push-run">按今日提醒推送一次</button>
+          <button class="btn-secondary btn-small" id="demo-seed-load">加载演示种子</button>
+          <button class="btn-danger btn-small" id="demo-clear">清空全部事件</button>
+        </div>
+      </div>
+    </div>
     <div class="card" style="text-align:center;color:var(--text2);font-size:.82rem">
       <p>☀️ 日常提醒系统 v${health.version||'3.0'}</p>
-      <p>状态: ${health.status||'ok'} · ${health.time||''}</p>
+      <p>状态: ${health.status||'ok'} · ${health.time||''} · 事件 ${health.events??'—'}</p>
       <p style="margin-top:8px"><a href="https://github.com/follower-ding/reminder" target="_blank">GitHub</a></p>
     </div>`;
 
@@ -446,5 +458,35 @@ async function renderSettings(el) {
     cfg.check_times = document.getElementById("config-times").value.split(",").map(s => s.trim()).filter(Boolean);
     await api("/config", { method: "PUT", body: JSON.stringify(cfg) });
     toast("✅ 设置已保存");
+  });
+  document.getElementById("demo-push-load").addEventListener("click", async () => {
+    const res = await api("/demo/load-push-test", { method: "POST", body: "{}" });
+    if (res.error) { toast("❌ " + res.error); return; }
+    toast(`✅ 已加载 ${res.events} 条测试事件（今日可推 ${res.todayCount} 条）`);
+  });
+  document.getElementById("demo-push-run").addEventListener("click", async () => {
+    const feishu_enabled = document.getElementById("toggle-feishu").classList.contains("on");
+    const serverchan_enabled = document.getElementById("toggle-serverchan").classList.contains("on");
+    const webhook_url = document.getElementById("feishu-url").value.trim();
+    const sendkey = document.getElementById("serverchan-key").value.trim();
+    const res = await api("/push/run", {
+      method: "POST",
+      body: JSON.stringify({ feishu_enabled, serverchan_enabled, webhook_url, sendkey })
+    });
+    if (res.error) { toast("❌ " + res.error); return; }
+    if (res.message) { toast("⚠️ " + res.message); return; }
+    const f = res.feishu?.ok ? "飞书✅" : ("飞书❌ " + (res.feishu?.error || ""));
+    const s = res.serverchan?.ok ? "微信✅" : ("微信❌ " + (res.serverchan?.error || ""));
+    toast(`推送结果：今日${res.today} · ${f} · ${s}`);
+  });
+  document.getElementById("demo-seed-load").addEventListener("click", async () => {
+    if (!confirm("将用演示种子覆盖当前全部事件，确定？")) return;
+    const res = await api("/demo/load-seed", { method: "POST", body: "{}" });
+    toast(res.ok ? `✅ 已加载 ${res.events} 条演示事件` : "❌ " + (res.error || "失败"));
+  });
+  document.getElementById("demo-clear").addEventListener("click", async () => {
+    if (!confirm("确定清空全部事件？")) return;
+    const res = await api("/demo/clear", { method: "POST", body: "{}" });
+    toast(res.ok ? "✅ 已清空事件" : "❌ " + (res.error || "失败"));
   });
 }

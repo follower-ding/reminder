@@ -1,0 +1,41 @@
+{
+  "description": "推送联调测试数据（与 store.readPushTestData 一致；日期在运行时替换为当天）",
+  "events": [
+    {
+      "id": 9001,
+      "type": "medicine",
+      "name": "【测试】每日吃药提醒",
+      "category": "test",
+      "enabled": true,
+      "schedule": { "mode": "daily" },
+      "messages": { "default": "💊 【推送测试】该吃药了（daily）" }
+    },
+    {
+      "id": 9002,
+      "type": "birthday",
+      "name": "【测试】今日生日",
+      "category": "test",
+      "enabled": true,
+      "schedule": { "mode": "yearly", "month": "TODAY_MONTH", "day": "TODAY_DAY" },
+      "messages": { "today": "🎂 【推送测试】生日快乐！" }
+    },
+    {
+      "id": 9003,
+      "type": "bill",
+      "name": "【测试】今日缴费",
+      "category": "test",
+      "enabled": true,
+      "schedule": { "mode": "monthly", "day": "TODAY_DAY" },
+      "messages": { "today": "📄 【推送测试】今天要缴费" }
+    },
+    {
+      "id": 9004,
+      "type": "health",
+      "name": "【测试】每日运动",
+      "category": "test",
+      "enabled": true,
+      "schedule": { "mode": "daily" },
+      "messages": { "default": "🏃 【推送测试】起来活动一下（Server酱/飞书）" }
+    }
+  ]
+}
