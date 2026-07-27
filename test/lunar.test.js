@@ -62,6 +62,30 @@ describe('lunar calendar', () => {
     assert.ok(r);
     assert.ok(r.month >= 1 && r.month <= 12);
     assert.ok(r.day >= 1 && r.day <= 30);
-    assert.match(r.label, /月.*日/);
+    assert.match(r.label, /月/);
+  });
+
+  it('2000-11-27 solar maps to 冬月初二', () => {
+    const { solarToLunar, lunarToSolar, formatLunar } = require('../lib/lunar');
+    const r = solarToLunar(new Date(2000, 10, 27, 12));
+    assert.equal(r.month, 11);
+    assert.equal(r.day, 2);
+    assert.equal(r.label, '冬月初二');
+    assert.equal(formatLunar(11, 2), '冬月初二');
+    const back = lunarToSolar(11, 2, 2000);
+    assert.ok(back);
+    assert.equal(back.getFullYear(), 2000);
+    assert.equal(back.getMonth() + 1, 11);
+    assert.equal(back.getDate(), 27);
+  });
+
+  it('same solar MD maps to different lunar across years', () => {
+    const { solarToLunar } = require('../lib/lunar');
+    const a = solarToLunar(new Date(2000, 10, 27, 12));
+    const b = solarToLunar(new Date(2026, 10, 27, 12));
+    assert.equal(a.label, '冬月初二');
+    assert.equal(b.month, 10);
+    assert.equal(b.day, 19);
+    assert.notEqual(a.label, b.label);
   });
 });
