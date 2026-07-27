@@ -660,57 +660,8 @@ app.post('/api/feishu/event', async (req, res) => {
 });
 
 // ─── 演示 / 推送联调数据 ─────────────────────────────
-app.post('/api/demo/load-push-test', async (req, res) => {
-  try {
-    const n = now();
-    const demo = readPushTestData(n);
-    const prev = await loadData();
-    const saved = await saveData({
-      events: demo.events,
-      history: [
-        ...(prev.history || []),
-        { id: nextId(prev.history || []), eventId: 0, action: 'demo', detail: 'load-push-test', date: dateStr(), ts: Date.now() }
-      ]
-    });
-    const today = saved.events.map(ev => checkEvent(ev, n)).filter(r => r && r.active && r.days === 0);
-    res.json({ ok: true, events: saved.events.length, todayCount: today.length, today });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
 
-app.post('/api/demo/load-seed', async (req, res) => {
-  try {
-    const seed = readSeedData();
-    const prev = await loadData();
-    const saved = await saveData({
-      events: seed.events,
-      history: [
-        ...(prev.history || []),
-        { id: nextId(prev.history || []), eventId: 0, action: 'demo', detail: 'load-seed', date: dateStr(), ts: Date.now() }
-      ]
-    });
-    res.json({ ok: true, events: saved.events.length });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
 
-app.post('/api/demo/clear', async (req, res) => {
-  try {
-    const prev = await loadData();
-    await saveData({
-      events: [],
-      history: [
-        ...(prev.history || []),
-        { id: nextId(prev.history || []), eventId: 0, action: 'demo', detail: 'clear-all', date: dateStr(), ts: Date.now() }
-      ]
-    });
-    res.json({ ok: true, events: 0 });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
 
 /** 手动推送：事项卡与热点卡分开发（绝不合并） */
 app.post('/api/push/run', async (req, res) => {
@@ -1036,70 +987,8 @@ app.get('/api/events/:id/detail', async (req, res) => {
 });
  
 // ─── 推送测试 ──────────────────────────────────────────
-app.post('/api/feishu/test', async (req, res) => {
-  try {
-    const saved = await loadConfig();
-    const body = req.body || {};
-    const config = {
-      ...saved,
-      feishu: mergeFeishuConfig(saved.feishu, {
-        enabled: body.enabled != null ? !!body.enabled : saved.feishu?.enabled,
-        webhook_url: body.webhook_url,
-        chat_id: body.chat_id
-      })
-    };
-    if (body.persist) {
-      saved.feishu = config.feishu;
-      await saveConfig(saved);
-    }
-    const card = buildFeishuCard(
-      dateStr(),
-      [{ message: '推送通道可用。此消息不是任何事项提醒。', type: 'custom' }],
-      '【连通性测试】非事项提醒',
-      APP_URL,
-      BRAND.name
-    );
-    const result = await sendFeishuCard(config, card);
-    res.json(result);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
 
-app.post('/api/serverchan/test', async (req, res) => {
-  try {
-    const saved = await loadConfig();
-    const body = req.body || {};
-    const config = {
-      ...saved,
-      serverchan: {
-        ...(saved.serverchan || {}),
-        enabled: body.enabled != null ? !!body.enabled : !!saved.serverchan?.enabled,
-        sendkey: body.sendkey != null ? String(body.sendkey).trim() : (saved.serverchan?.sendkey || '')
-      }
-    };
-    if (body.persist) {
-      saved.serverchan = config.serverchan;
-      await saveConfig(saved);
-    }
-    const result = await sendServerchan(config, '🔔 提醒系统测试', '这是一条来自日常提醒系统的测试消息\n\n如果收到这条消息，说明配置正确 ✅');
-    res.json(result);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
 
-app.post('/api/feishu/send-card', async (req, res) => {
-  try {
-    const config = await loadConfig();
-    const { title, items } = req.body || {};
-    const card = buildFeishuCard(dateStr(), items || [], title, APP_URL);
-    const result = await sendFeishuCard(config, card);
-    res.json(result);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
 
 // ─── SPA 兜底 ─────────────────────────────────────────
 // Mount extracted route modules
