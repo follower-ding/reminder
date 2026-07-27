@@ -1,7 +1,8 @@
-/**
+﻿/**
  * Nudge engine — space 模型 + 调度 + 卡片
  */
 const crypto = require('crypto');
+const { lunarToSolar } = require('./lib/lunar');
 
 const TYPE_META = {
   birthday: { label: '生日', icon: '🎂', modes: ['yearly'], headerColor: 'orange' },
@@ -370,10 +371,22 @@ function checkEvent(ev, n) {
 
   if (mode === 'monthly' || mode === 'yearly') {
     const month = mode === 'monthly' ? n.month : sched.month || 1;
-    const targetDay = new Date(n.year, month - 1, sched.day || 1);
+    const mday = sched.day || 1;
+    let targetDay;
+    if (e.calendar === 'lunar' && mode === 'yearly' && month >= 1 && month <= 12) {
+      const ld = lunarToSolar(month, mday, n.year);
+      targetDay = ld || new Date(n.year, month - 1, mday);
+    } else {
+      targetDay = new Date(n.year, month - 1, mday);
+    }
     let diff = Math.floor((targetDay - new Date(n.year, n.month - 1, n.day)) / 86400000);
     if (mode === 'yearly' && diff < 0) {
-      targetDay.setFullYear(n.year + 1);
+      if (e.calendar === 'lunar') {
+        const nextLunar = lunarToSolar(month, mday, n.year + 1);
+        targetDay = nextLunar || new Date(n.year + 1, month - 1, mday);
+      } else {
+        targetDay.setFullYear(n.year + 1);
+      }
       diff = Math.floor((targetDay - new Date(n.year, n.month - 1, n.day)) / 86400000);
     }
     if (mode === 'monthly' && diff < 0) {

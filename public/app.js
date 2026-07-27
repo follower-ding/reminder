@@ -52,6 +52,15 @@ function toast(msg) {
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
+/* Lunar conversion (Intl API) */
+const LUNAR_CN = {正:1,二:2,三:3,四:4,五:5,六:6,七:7,八:8,九:9,十:10,十一:11,十二:12,腊:12};
+let _lunFmt = null;
+function _lunF() { if (!_lunFmt) _lunFmt = new Intl.DateTimeFormat("zh-CN-u-ca-chinese",{year:"numeric",month:"numeric",day:"numeric"}); return _lunFmt; }
+function lunarToSolar(mon,day,year) {
+  const s=new Date(year,0,1),e=new Date(year+1,0,20),f=_lunF(),d=new Date(s);
+  while(d<=e){const p=f.formatToParts(d);let lm=0,ld=0;for(const x of p){if(x.type==="month")lm=LUNAR_CN[x.value.replace(/月$/,"")]||0;if(x.type==="day")ld=parseInt(x.value,10)}if(lm===mon&&ld===day)return new Date(d);d.setDate(d.getDate()+1)}return null
+}
+
 function spaceOf(ev) {
   if (ev?.space && SPACE_META[ev.space]) return ev.space;
   if (ev?.type === "birthday" || ev?.type === "period") return "moment";
@@ -121,7 +130,7 @@ function scheduleMeta(ev) {
     const diff = Math.ceil((t - now) / 86400000);
     const mn = ["一","二","三","四","五","六","七","八","九","十","十一","十二"][t.getMonth()];
     bits.push(s.month + "/" + s.day + "(" + cal + ")");
-    bits.push("剩" + diff + "天，下次" + mn + "月" + t.getDate() + "日");
+    bits.push("剩" + diff + "天，下次" + mn + "月" + t.getDate() + "日 周" + weekDay);
     if ((ev.type === "birthday" || ev.subtype === "birthday") && ev.birth_year) {
       bits.push((t.getFullYear() - ev.birth_year) + "岁");
     }
