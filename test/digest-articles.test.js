@@ -40,17 +40,22 @@ describe('github / news article templates', () => {
     assert.match(md, /打开/);
   });
 
-  it('feishu card uses article body without 每日热点 bullets', () => {
+  it('feishu card uses short article + doc button', () => {
     const { pushItem } = buildSourceArticlePush('github', sampleGh, '2026-07-27');
-    const card = buildFeishuCard('2026-07-27', [pushItem], 'Nudge · GitHub 热门', 'http://example.com');
+    const card = buildFeishuCard('2026-07-27', [pushItem], 'Nudge · GitHub 热门', 'http://example.com', 'Nudge', {
+      docUrl: 'https://www.feishu.cn/docx/gh1',
+      openLabel: '阅读全文'
+    });
     const raw = JSON.stringify(card);
-    assert.match(raw, /今日开源精选/);
-    assert.match(raw, /为什么值得看/);
+    assert.match(raw, /精选摘要|今日开源精选|GitHub/);
+    assert.match(raw, /阅读全文/);
+    assert.match(raw, /docx\/gh1/);
     assert.doesNotMatch(raw, /每日热点/);
-    assert.doesNotMatch(raw, /• 🔥/);
+    assert.doesNotMatch(raw, /打开清单/);
+    assert.match(pushItem.fullMarkdown, /为什么值得看/);
   });
 
-  it('bundle github section emits one article push item', async () => {
+  it('bundle github section emits short push + fullMarkdown', async () => {
     clearDigestCache();
     const bundle = await getDigestBundle({
       digests: {
@@ -62,12 +67,12 @@ describe('github / news article templates', () => {
         learning: { enabled: false }
       }
     }, '2026-07-27', { withAI: false });
-    // 网络可能失败；有内容时校验模板
     if (bundle.sections[0]?.pushItems?.length) {
       const item = bundle.sections[0].pushItems[0];
       assert.equal(item.format, 'article');
       assert.match(item.message, /今日精选 · GitHub 热门/);
-      assert.match(item.message, /为什么值得看/);
+      assert.match(item.message, /阅读全文|飞书文档/);
+      assert.match(item.fullMarkdown, /为什么值得看/);
     }
   });
 });

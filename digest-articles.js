@@ -66,10 +66,49 @@ function formatNewsArticle(items, dateKey) {
   ].filter((x) => x != null && x !== '').join('\n');
 }
 
+function formatGithubShort(items, dateKey) {
+  const list = (items || []).slice(0, 3);
+  const lines = list.map((it, i) => {
+    const blurb = it.blurb || it.desc || '';
+    return `**#${i + 1}** ${it.title}${it.meta ? ` · ${it.meta}` : ''}${blurb ? `\n${blurb}` : ''}`;
+  });
+  return [
+    '🔥 **今日精选 · GitHub 热门**',
+    dateKey ? `日期：${dateKey}` : null,
+    `共 ${list.length} 个仓库`,
+    '',
+    ...lines,
+    '',
+    '📄 每个仓库的「为什么值得看」与链接已写入飞书文档。',
+    '点下方 **阅读全文** 打开。'
+  ].filter(Boolean).join('\n');
+}
+
+function formatNewsShort(items, dateKey) {
+  const list = (items || []).slice(0, 3);
+  const lines = list.map((it, i) => {
+    const blurb = it.blurb || it.desc || '';
+    return `**#${i + 1}** ${it.title}${blurb ? `\n${blurb}` : ''}`;
+  });
+  return [
+    '📰 **今日精选 · 科技快讯**',
+    dateKey ? `日期：${dateKey}` : null,
+    `共 ${list.length} 条`,
+    '',
+    ...lines,
+    '',
+    '📄 导读与原文链接已写入飞书文档。',
+    '点下方 **阅读全文** 打开。'
+  ].filter(Boolean).join('\n');
+}
+
 function buildSourceArticlePush(sourceId, items, dateKey) {
   const markdown = sourceId === 'github'
     ? formatGithubArticle(items, dateKey)
     : formatNewsArticle(items, dateKey);
+  const short = sourceId === 'github'
+    ? formatGithubShort(items, dateKey)
+    : formatNewsShort(items, dateKey);
   const first = (items || [])[0] || {};
   return {
     itemPreview: {
@@ -87,7 +126,9 @@ function buildSourceArticlePush(sourceId, items, dateKey) {
       source: sourceId,
       name: sourceId,
       format: 'article',
-      message: markdown
+      message: short,
+      fullMarkdown: markdown,
+      shortMessage: short
     }
   };
 }
@@ -95,6 +136,8 @@ function buildSourceArticlePush(sourceId, items, dateKey) {
 module.exports = {
   formatGithubArticle,
   formatNewsArticle,
+  formatGithubShort,
+  formatNewsShort,
   formatEntryBlock,
   buildSourceArticlePush,
   fallbackWhy

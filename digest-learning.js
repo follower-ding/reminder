@@ -395,10 +395,23 @@ async function enrichLessonWithAI(lesson) {
   }
 }
 
+function formatLessonShort(lesson, dateLabel) {
+  return [
+    `📚 **今日课题** · ${lesson.topic}`,
+    dateLabel ? `日期：${dateLabel}` : null,
+    '',
+    lesson.one_liner,
+    '',
+    '📄 详细讲解（是什么 / 例子 / 练习）已写入飞书文档。',
+    '点下方 **阅读全文** 打开文档，不跳转网页。'
+  ].filter(Boolean).join('\n');
+}
+
 async function buildDailyProgrammingLesson({ dateKey, topics, useAI }) {
   let lesson = pickLesson(dateKey, topics);
   if (useAI) lesson = await enrichLessonWithAI(lesson);
   const markdown = formatLessonMarkdown(lesson, dateKey);
+  const short = formatLessonShort(lesson, dateKey);
   return {
     lesson,
     item: {
@@ -416,7 +429,9 @@ async function buildDailyProgrammingLesson({ dateKey, topics, useAI }) {
       source: 'learning',
       name: 'learning',
       format: 'lesson',
-      message: markdown
+      message: short,
+      fullMarkdown: markdown,
+      shortMessage: short
     }
   };
 }
@@ -425,6 +440,7 @@ module.exports = {
   LESSON_BANK,
   pickLesson,
   formatLessonMarkdown,
+  formatLessonShort,
   enrichLessonWithAI,
   buildDailyProgrammingLesson
 };

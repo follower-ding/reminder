@@ -237,8 +237,33 @@ async function answerQa(intent, userText) {
         return { text: `「${labels[intent]}」暂无内容（抓取失败或为空）。可稍后再试，或在订阅页看预览。` };
       }
       const title = `${brand} · ${sec.title}`;
-      const cardBody = buildFeishuCard(today, sec.pushItems, title, appUrl, brand);
-      const preview = String(sec.pushItems[0].message || '').slice(0, 400);
+      const { createMarkdownDocument, shortenDigestMarkdown } = require('./feishu-doc');
+      const fullMd = (sec.pushItems || [])
+        .map((i) => i.fullMarkdown || i.message || '')
+        .filter(Boolean)
+        .join('\n\n---\n\n');
+      let docUrl = null;
+      if (fullMd && feishuBot.botConfigured()) {
+        const chatId = (await loadConfig()).feishu?.chat_id;
+        const doc = await createMarkdownDocument({
+          title: `${title} · ${today}`,
+          markdown: fullMd,
+          folderToken: process.env.FEISHU_DOC_FOLDER_TOKEN || '',
+          chatId
+        });
+        if (doc.ok) docUrl = doc.url;
+      }
+      const shortItems = (sec.pushItems || []).map((i) => ({
+        ...i,
+        message: i.shortMessage
+          || shortenDigestMarkdown(i.fullMarkdown || i.message, i.blurb || i.desc)
+      }));
+      const cardBody = buildFeishuCard(today, shortItems, title, appUrl, brand, {
+        docUrl: docUrl || undefined,
+        openLabel: docUrl ? '阅读全文' : undefined
+      });
+      const preview = String(shortItems[0]?.message || '').slice(0, 400)
+        + (docUrl ? `\n\n文档：${docUrl}` : '');
       return { text: preview, card: cardBody };
     } catch (e) {
       return { text: `拉取「${labels[intent]}」失败：${e.message}` };
