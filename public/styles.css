@@ -206,6 +206,13 @@ h1,h2,h3 { font-family: var(--font-d); font-weight: 600; letter-spacing: -.02em;
   height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--teal), var(--teal-deep));
   transition: width .45s var(--ease);
 }
+.update-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: .75rem;
+  margin: .65rem 1rem 0; padding: .7rem .9rem;
+  background: rgba(15,118,110,.08); border: 1px solid rgba(15,118,110,.18);
+  border-radius: 14px; color: var(--teal-deep, #134E4A); font-size: .86rem; font-weight: 600;
+}
+.update-banner-actions { display: flex; gap: .4rem; flex-shrink: 0; }
 .hint-banner {
   position: relative; background: rgba(201,132,74,.08); border: 1px solid rgba(201,132,74,.18);
   color: var(--amber); border-radius: 14px; padding: .75rem 4.2rem .75rem .9rem; font-size: .85rem; margin-bottom: 1rem;
