@@ -125,12 +125,24 @@ function scheduleMeta(ev) {
   if (s.mode === "yearly" && s.month && s.day) {
     const cal = ev.calendar === "lunar" ? "农历" : "阳历";
     const now = new Date();
-    let t = new Date(now.getFullYear(), s.month - 1, s.day);
-    if (t < now) t = new Date(now.getFullYear() + 1, s.month - 1, s.day);
+    const curY = now.getFullYear();
+    let t;
+    if (ev.calendar === "lunar") {
+      t = lunarToSolar(s.month, s.day, curY);
+      if (!t) t = new Date(curY, s.month - 1, s.day);
+      if (t < now) {
+        const t2 = lunarToSolar(s.month, s.day, curY + 1);
+        if (t2) t = t2;
+        else t = new Date(curY + 1, s.month - 1, s.day);
+      }
+    } else {
+      t = new Date(curY, s.month - 1, s.day);
+      if (t < now) t = new Date(curY + 1, s.month - 1, s.day);
+    }
     const diff = Math.ceil((t - now) / 86400000);
-    const mn = ["一","二","三","四","五","六","七","八","九","十","十一","十二"][t.getMonth()];
+    const wd = ["日", "一", "二", "三", "四", "五", "六"][t.getDay()];
     bits.push(s.month + "/" + s.day + "(" + cal + ")");
-    bits.push("剩" + diff + "天，下次" + mn + "月" + t.getDate() + "日 周" + weekDay);
+    bits.push("剩" + diff + "天，下次" + (t.getMonth() + 1) + "月" + t.getDate() + "日 周" + wd);
     if ((ev.type === "birthday" || ev.subtype === "birthday") && ev.birth_year) {
       bits.push((t.getFullYear() - ev.birth_year) + "岁");
     }
@@ -141,7 +153,7 @@ function scheduleMeta(ev) {
     if (t < now) t = new Date(now.getFullYear(), now.getMonth() + 1, s.day);
     bits.push("剩" + Math.ceil((t - now) / 86400000) + "天");
   }
-  return bits.join(" \u00B7 ");
+  return bits.join(" · ");
 }
 
 async function login() {
@@ -441,26 +453,43 @@ async function renderEvents(el) {
 
 function eventCard(ev) {
   const space = spaceOf(ev);
-  let ageLabel = '';
+  let ageLabel = "";
   if ((ev.type === "birthday" || ev.subtype === "birthday") && ev.birth_year) {
-    ageLabel = ' \u00B7 ' + (new Date().getFullYear() - ev.birth_year) + '\u5C81';
+    const s = ev.schedule || {};
+    const now = new Date();
+    const curY = now.getFullYear();
+    let next;
+    if (ev.calendar === "lunar" && s.month && s.day) {
+      next = lunarToSolar(s.month, s.day, curY);
+      if (!next) next = new Date(curY, (s.month || 1) - 1, s.day || 1);
+      if (next < now) {
+        const t2 = lunarToSolar(s.month, s.day, curY + 1);
+        next = t2 || new Date(curY + 1, (s.month || 1) - 1, s.day || 1);
+      }
+    } else if (s.month && s.day) {
+      next = new Date(curY, s.month - 1, s.day);
+      if (next < now) next = new Date(curY + 1, s.month - 1, s.day);
+    } else {
+      next = new Date(curY, 0, 1);
+    }
+    ageLabel = " · " + (next.getFullYear() - ev.birth_year) + "岁";
   }
-  const calBadge = ev.calendar === 'lunar' ? '<span class="badge">\u519C\u5386</span>' : '';
-  return '<article class="nudge-card clickable space-' + space + ' ' + esc(ev.type) + '" data-open="' + ev.id + '">' +
-    '<div class="rail"></div>' +
-    '<div class="card-top">' +
-      '<div class="title">' + esc(ev.name) + ageLabel + '</div>' +
-      '<div class="badge-row">' + spaceBadge(space) + calBadge + (ev.archived ? '<span class="badge">\u5DF2\u5F52\u6863</span>' : ev.enabled ? '' : '<span class="badge">\u505C\u7528</span>') + '</div>' +
-    '</div>' +
-    '<div class="meta">' + esc(scheduleMeta(ev)) + '</div>' +
-    '<div class="card-foot">' +
-      '<label class="check-wrap" onclick="event.stopPropagation()">' +
-        '<input type="checkbox" class="sel-box" data-id="' + ev.id + '" ' + (selectedIds.has(ev.id) ? 'checked' : '') + '>' +
-        '<span class="form-hint">\u9009</span>' +
-      '</label>' +
-      '<span class="form-hint">\u8BE6\u60C5 \u2192</span>' +
-    '</div>' +
-  '</article>';
+  const calBadge = ev.calendar === "lunar" ? '<span class="badge">农历</span>' : "";
+  return `<article class="nudge-card clickable space-${space} ${esc(ev.type)}" data-open="${ev.id}">
+    <div class="rail"></div>
+    <div class="card-top">
+      <div class="title">${esc(ev.name)}${ageLabel}</div>
+      <div class="badge-row">${spaceBadge(space)}${calBadge}${ev.archived ? `<span class="badge">已归档</span>` : ev.enabled ? "" : `<span class="badge">停用</span>`}</div>
+    </div>
+    <div class="meta">${esc(scheduleMeta(ev))}</div>
+    <div class="card-foot">
+      <label class="check-wrap" onclick="event.stopPropagation()">
+        <input type="checkbox" class="sel-box" data-id="${ev.id}" ${selectedIds.has(ev.id) ? "checked" : ""}>
+        <span class="form-hint">选</span>
+      </label>
+      <span class="form-hint">详情 →</span>
+    </div>
+  </article>`;
 }
 
 function periodPhaseLabel(f) {
@@ -918,6 +947,15 @@ function eventFormHTML(ev, spaceHint) {
           <div class="form-group"><label>日</label><input name="day" type="number" min="1" max="31" value="${s.day || ""}"></div>
         </div>
         <div class="form-row">
+          <div class="form-group"><label>历法</label>
+            <select name="calendar">
+              <option value="solar" ${(ev?.calendar || "solar") !== "lunar" ? "selected" : ""}>阳历</option>
+              <option value="lunar" ${ev?.calendar === "lunar" ? "selected" : ""}>农历</option>
+            </select>
+          </div>
+          <div class="form-group"><label>出生年（可选）</label><input name="birth_year" type="number" min="1900" max="2100" placeholder="如 1990" value="${ev?.birth_year || ""}"></div>
+        </div>
+        <div class="form-row">
           <div class="form-group"><label>提前（天）</label><input name="remind_ahead" type="number" min="0" value="${ev?.remind_ahead ?? 3}"></div>
           <div class="form-group"><label>推送时刻</label><input name="time" type="time" value="${s.time || "09:00"}"></div>
         </div>
@@ -935,7 +973,15 @@ function eventFormHTML(ev, spaceHint) {
           <div class="form-group"><label>月</label><input name="month_a" type="number" value="${s.month || ""}"></div>
           <div class="form-group"><label>日</label><input name="day_a" type="number" value="${s.day || ""}"></div>
         </div>
-        <div class="form-group"><label>推送时刻</label><input name="time_anni" type="time" value="${s.time || "09:00"}"></div>
+        <div class="form-row">
+          <div class="form-group"><label>历法</label>
+            <select name="calendar_a">
+              <option value="solar" ${(ev?.calendar || "solar") !== "lunar" ? "selected" : ""}>阳历</option>
+              <option value="lunar" ${ev?.calendar === "lunar" ? "selected" : ""}>农历</option>
+            </select>
+          </div>
+          <div class="form-group"><label>推送时刻</label><input name="time_anni" type="time" value="${s.time || "09:00"}"></div>
+        </div>
         <div class="form-group"><label>提醒文案</label><input name="msg_anni" value="${esc(m.default || "")}"></div>
       </div>
       <div id="fields-habit" class="${space === "habit" || space === "task" ? "" : "hidden"}">
@@ -1014,6 +1060,8 @@ function setupEventForm(modal, ev, spaceHint) {
     if (space === "moment" && subtype === "birthday") {
       body = {
         space, subtype, name: fd.get("name"),
+        calendar: fd.get("calendar") === "lunar" ? "lunar" : "solar",
+        birth_year: fd.get("birth_year") ? +fd.get("birth_year") : undefined,
         remind_ahead: +fd.get("remind_ahead") || 0,
         schedule: { mode: "yearly", month: +fd.get("month"), day: +fd.get("day"), time: fd.get("time") || "09:00" },
         messages: {}
@@ -1034,6 +1082,7 @@ function setupEventForm(modal, ev, spaceHint) {
     } else if (space === "moment") {
       body = {
         space, subtype: "anniversary", name: fd.get("name"),
+        calendar: fd.get("calendar_a") === "lunar" ? "lunar" : "solar",
         schedule: { mode: "yearly", month: fd.get("month_a") ? +fd.get("month_a") : undefined, day: fd.get("day_a") ? +fd.get("day_a") : undefined, time: fd.get("time_anni") || "09:00" },
         messages: { default: fd.get("msg_anni") || undefined }
       };

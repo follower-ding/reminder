@@ -986,15 +986,11 @@ app.get('/api/events/:id/detail', async (req, res) => {
   }
 });
  
-// ─── 推送测试 ──────────────────────────────────────────
-
-
+// Mount extracted route modules before SPA fallback
+app.use('/api', pushRoutes);
+app.use('/api', demoRoutes);
 
 // ─── SPA 兜底 ─────────────────────────────────────────
-// Mount extracted route modules
-app.use("/api", pushRoutes);
-app.use("/api", demoRoutes);
-
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api/')) return res.status(404).json({ error: '未知 API' });
   res.sendFile(path.join(__dirname, 'public', 'index.html'));

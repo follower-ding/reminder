@@ -751,6 +751,13 @@ function normalizeEventInput(body) {
     acks: raw.acks && typeof raw.acks === 'object' ? raw.acks : {},
     type: 'custom'
   };
+  if (raw.calendar === 'lunar' || raw.calendar === 'solar') {
+    draft.calendar = raw.calendar;
+  }
+  if (raw.birth_year != null && raw.birth_year !== '') {
+    const by = parseInt(raw.birth_year, 10);
+    if (Number.isFinite(by) && by >= 1900 && by <= 2100) draft.birth_year = by;
+  }
   return syncTypeFromSpace(draft);
 }
 
