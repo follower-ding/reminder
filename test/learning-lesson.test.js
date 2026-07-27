@@ -20,23 +20,28 @@ describe('daily programming lesson template', () => {
     assert.match(md, /自检/);
   });
 
-  it('card body has no bullet prefix for lesson format', () => {
+  it('card body uses short lesson + doc button', () => {
+    const { formatLessonShort } = require('../digest-learning');
     const lesson = pickLesson('2026-07-27', []);
-    const message = formatLessonMarkdown(lesson, '2026-07-27');
+    const message = formatLessonShort(lesson, '2026-07-27');
     const card = buildFeishuCard('2026-07-27', [{
       kind: 'digest',
       type: 'digest',
       format: 'lesson',
       message
-    }], 'Nudge · 每日编程', 'http://example.com');
+    }], 'Nudge · 每日编程', 'http://example.com', 'Nudge', {
+      docUrl: 'https://www.feishu.cn/docx/demo',
+      openLabel: '阅读全文'
+    });
     const raw = JSON.stringify(card);
     assert.match(raw, /今日课题/);
-    assert.match(raw, /今日编程精读/);
-    assert.doesNotMatch(raw, /• 📚/);
+    assert.match(raw, /阅读全文/);
+    assert.match(raw, /feishu\.cn\/docx\/demo/);
     assert.doesNotMatch(raw, /每日热点/);
+    assert.doesNotMatch(raw, /打开清单/);
   });
 
-  it('bundle learning section uses lesson push item', async () => {
+  it('bundle learning section uses short card + fullMarkdown', async () => {
     clearDigestCache();
     const bundle = await getDigestBundle({
       digests: {
@@ -48,13 +53,15 @@ describe('daily programming lesson template', () => {
         learning: { enabled: true, ai: false, topics: ['前端', '算法'] }
       }
     }, '2026-07-27', { withAI: false });
-    const msg = bundle.sections[0].pushItems[0].message;
-    assert.equal(bundle.sections[0].pushItems[0].format, 'lesson');
-    assert.match(msg, /今日课题/);
-    assert.match(msg, /是什么/);
+    const item = bundle.sections[0].pushItems[0];
+    assert.equal(item.format, 'lesson');
+    assert.match(item.message, /今日课题/);
+    assert.match(item.message, /阅读全文|飞书文档/);
+    assert.match(item.fullMarkdown, /是什么/);
+    assert.match(item.fullMarkdown, /动手/);
   });
 
-  it('buildDailyProgrammingLesson returns one structured item', async () => {
+  it('buildDailyProgrammingLesson returns short + full', async () => {
     const built = await buildDailyProgrammingLesson({
       dateKey: '2026-01-01',
       topics: ['Git'],
@@ -62,6 +69,7 @@ describe('daily programming lesson template', () => {
     });
     assert.ok(built.lesson.topic);
     assert.equal(built.pushItem.format, 'lesson');
-    assert.match(built.pushItem.message, /动手/);
+    assert.match(built.pushItem.message, /阅读全文|飞书文档/);
+    assert.match(built.pushItem.fullMarkdown, /动手/);
   });
 });

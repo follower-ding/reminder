@@ -557,9 +557,13 @@ function digestLeadLine(dateLabel, brand, title, groups) {
   return `✨ **${dateLabel}** · ${brand}\n今日热点精选`;
 }
 
-function buildFeishuCard(dateLabel, items, title, appUrl, brandName) {
+function buildFeishuCard(dateLabel, items, title, appUrl, brandName, options = {}) {
   const url = appUrl || process.env.APP_URL || 'https://reminder-three-gamma.vercel.app';
   const brand = brandName || 'Nudge';
+  const docUrl = options.docUrl || null;
+  const openUrl = docUrl || url;
+  const openLabel = options.openLabel
+    || (docUrl ? '阅读全文' : null);
   const groups = { period: [], birthday: [], custom: [], digest: [], other: [] };
   for (const i of items || []) {
     if (i.kind === 'digest' || i.type === 'digest') groups.digest.push(i);
@@ -595,11 +599,15 @@ function buildFeishuCard(dateLabel, items, title, appUrl, brandName) {
     || isRichDigest
     || (groups.digest.length && !groups.custom.length && !groups.period.length && !groups.birthday.length);
   const headerColor = isTest ? 'grey' : isDigest ? 'orange' : groups.period.length ? 'carmine' : 'turquoise';
-  const digestLead = digestLeadLine(dateLabel, brand, title, groups);
+  const digestLead = docUrl
+    ? `✨ **${dateLabel}** · ${brand}\n精选摘要 · 全文见飞书文档`
+    : digestLeadLine(dateLabel, brand, title, groups);
   const footerHint = isTest
     ? ''
     : isDigest
-      ? '\n\n——\n有问题可私聊 Nudge 机器人'
+      ? (docUrl
+        ? '\n\n——\n点 **阅读全文** 打开飞书文档；有问题可私聊 Nudge'
+        : '\n\n——\n有问题可私聊 Nudge 机器人')
       : '\n\n——\n点下方 **已收到** 按钮即可确认（不离开飞书）；也可私聊回「收到」';
 
   const ackItems = (items || []).filter((i) => i.eventId && (i.ackValue || i.ackUrl));
@@ -631,14 +639,22 @@ function buildFeishuCard(dateLabel, items, title, appUrl, brandName) {
       });
     }
   }
+  const btnText = isTest
+    ? '知道了'
+    : (docUrl ? (openLabel || '阅读全文') : '打开清单');
   actionRows.push({
     tag: 'action',
     actions: [
       {
         tag: 'button',
-        text: { tag: 'plain_text', content: isTest ? '知道了' : '打开清单' },
-        type: 'default',
-        multi_url: { url, android_url: url, ios_url: url, pc_url: url }
+        text: { tag: 'plain_text', content: btnText },
+        type: docUrl ? 'primary' : 'default',
+        multi_url: {
+          url: openUrl,
+          android_url: openUrl,
+          ios_url: openUrl,
+          pc_url: openUrl
+        }
       }
     ]
   });

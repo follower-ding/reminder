@@ -215,13 +215,52 @@ function attachAckUrls(items, day) {
   });
 }
 
+async function prepareDigestDoc(config, items, title) {
+  const list = items || [];
+  const isDigest = list.length > 0
+    && list.every((i) => i.kind === 'digest' || i.type === 'digest');
+  if (!isDigest || !feishuBot.botConfigured()) {
+    return { items: list, docUrl: null };
+  }
+  const { createMarkdownDocument, shortenDigestMarkdown } = require('./feishu-doc');
+  const fullMd = list.map((i) => i.fullMarkdown || i.message || '').filter(Boolean).join('\n\n---\n\n');
+  if (!fullMd.trim()) return { items: list, docUrl: null };
+
+  const doc = await createMarkdownDocument({
+    title: String(title || 'Nudge 精选').slice(0, 80),
+    markdown: fullMd,
+    folderToken: process.env.FEISHU_DOC_FOLDER_TOKEN || config.feishu?.doc_folder_token || '',
+    chatId: resolveFeishuChatId(config)
+  });
+
+  const shortItems = list.map((i) => ({
+    ...i,
+    message: i.shortMessage
+      || shortenDigestMarkdown(i.fullMarkdown || i.message, i.blurb || i.desc)
+  }));
+
+  if (!doc.ok) {
+    console.warn('[feishu-doc]', doc.error || 'create failed');
+    return { items: shortItems, docUrl: null, docError: doc.error };
+  }
+  return { items: shortItems, docUrl: doc.url, documentId: doc.documentId };
+}
+
 async function pushReminderBundle(config, items, title) {
-  const out = { feishu: null, serverchan: null };
+  const out = { feishu: null, serverchan: null, doc: null };
   if (!items.length) return out;
   const brand = config.brand?.name || BRAND.name;
   const enriched = attachAckUrls(items);
+  const prepared = await prepareDigestDoc(config, enriched, title);
+  out.doc = prepared.docUrl ? { ok: true, url: prepared.docUrl } : { ok: false, error: prepared.docError || null };
   if (feishuPushReady(config)) {
-    out.feishu = await sendFeishuCard(config, buildFeishuCard(dateStr(), enriched, title, APP_URL, brand));
+    out.feishu = await sendFeishuCard(
+      config,
+      buildFeishuCard(dateStr(), prepared.items, title, APP_URL, brand, {
+        docUrl: prepared.docUrl || undefined,
+        openLabel: prepared.docUrl ? '阅读全文' : undefined
+      })
+    );
   } else {
     out.feishu = {
       ok: false,
@@ -231,7 +270,10 @@ async function pushReminderBundle(config, items, title) {
     };
   }
   if (config.serverchan?.enabled && config.serverchan?.sendkey) {
-    out.serverchan = await sendServerchan(config, title || `${brand} · ${dateStr()}`, buildServerchanBody(dateStr(), enriched));
+    const scBody = prepared.docUrl
+      ? `${buildServerchanBody(dateStr(), prepared.items)}\n\n飞书文档：${prepared.docUrl}`
+      : buildServerchanBody(dateStr(), prepared.items);
+    out.serverchan = await sendServerchan(config, title || `${brand} · ${dateStr()}`, scBody);
   } else {
     out.serverchan = { ok: false, error: 'Server酱未配置' };
   }
@@ -646,7 +688,7 @@ app.get('/api/health', async (req, res) => {
     res.json({
       status: 'ok',
       time: dateStr(),
-      version: '4.1.20',
+      version: '4.1.21',
       brand: BRAND.name,
       app_url: APP_URL,
       deepseek: { configured: !!process.env.DEEPSEEK_API_KEY },

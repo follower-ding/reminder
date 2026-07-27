@@ -606,7 +606,7 @@ async function renderSubscribe(el) {
       <div class="toggle-row"><span><strong>启用订阅推送</strong></span><div class="toggle ${d.enabled !== false ? "on" : ""}" id="tog-dig"></div></div>
       <div class="toggle-row"><span>AI 导读（DeepSeek）</span><div class="toggle ${d.ai_summary !== false ? "on" : ""}" id="tog-ai"></div></div>
       <div class="form-group"><label>默认推送时刻（各源未单独设置时使用）</label><input id="dig-time" type="time" value="${esc(d.push_time || "20:00")}"></div>
-      <p class="form-hint">到点各源单独推卡。飞书也可说「今天学什么 / GitHub / 科技快讯 / 帮助」。</p>
+      <p class="form-hint">到点推短卡，全文写入飞书文档（按钮「阅读全文」）。也可说「今天学什么 / GitHub / 科技快讯 / 帮助」。</p>
     </div>
     <div class="section-title"><h3>来源（分模块）</h3></div>
     <div class="source-grid">
