@@ -21,7 +21,13 @@
 - Action chips: staggered fade 40ms apart (≤4)
 - Respect `prefers-reduced-motion`
 
+## Palette (page override)
+- Sage: `#5B7C72` / soft `#E7EFEC`
+- Amber: `#C9844A` / soft `#F6EDE4`
+- Soft dual-layer shadows only; no sparkles, no card tilt
+
 ## Anti patterns
 - No purple gradient
 - No emoji in action buttons
 - No floating badge stickers over countdown
+- No decorative sparkles / skewed “playful” tiles

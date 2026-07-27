@@ -54,11 +54,39 @@ function esc(s) {
 }
 /* Lunar conversion (Intl API) */
 const LUNAR_CN = {正:1,二:2,三:3,四:4,五:5,六:6,七:7,八:8,九:9,十:10,十一:11,十二:12,腊:12};
+const LUNAR_MONTH_NAME = ["", "正月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "十一月", "腊月"];
 let _lunFmt = null;
 function _lunF() { if (!_lunFmt) _lunFmt = new Intl.DateTimeFormat("zh-CN-u-ca-chinese",{year:"numeric",month:"numeric",day:"numeric"}); return _lunFmt; }
 function lunarToSolar(mon,day,year) {
   const s=new Date(year,0,1),e=new Date(year+1,0,20),f=_lunF(),d=new Date(s);
   while(d<=e){const p=f.formatToParts(d);let lm=0,ld=0;for(const x of p){if(x.type==="month")lm=LUNAR_CN[x.value.replace(/月$/,"")]||0;if(x.type==="day")ld=parseInt(x.value,10)}if(lm===mon&&ld===day)return new Date(d);d.setDate(d.getDate()+1)}return null
+}
+function solarToLunar(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  const parts = _lunF().formatToParts(d);
+  let mon = 0, day = 0;
+  for (const p of parts) {
+    if (p.type === "month") mon = LUNAR_CN[p.value.replace(/月$/, "")] || 0;
+    if (p.type === "day") day = parseInt(p.value, 10) || 0;
+  }
+  if (!mon || !day) return null;
+  return { month: mon, day, label: LUNAR_MONTH_NAME[mon] + day + "日" };
+}
+function formatSolarMD(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  return (d.getMonth() + 1) + "月" + d.getDate() + "日";
+}
+function iconSvg(name) {
+  /* 科技感：实心几何 + 细描边，统一 18 viewBox */
+  const a = 'class="ico" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"';
+  if (name === "cake") return `<svg ${a}><path fill="currentColor" d="M4 13h16v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-7z"/><path fill="currentColor" opacity=".35" d="M4 13c1.2 1.4 2.6 2 4 2s2.8-.6 4-2c1.2 1.4 2.6 2 4 2s2.8-.6 4-2v2.2c-1.2 1-2.6 1.5-4 1.5s-2.8-.5-4-1.5c-1.2 1-2.6 1.5-4 1.5S5.2 16.2 4 15.2V13z"/><rect fill="currentColor" x="6.2" y="7.2" width="2.2" height="4.2" rx="1.1"/><rect fill="currentColor" x="10.9" y="5.5" width="2.2" height="5.9" rx="1.1"/><rect fill="currentColor" x="15.6" y="7.2" width="2.2" height="4.2" rx="1.1"/><circle fill="currentColor" cx="7.3" cy="5.4" r="1.35"/><circle fill="currentColor" cx="12" cy="3.8" r="1.35"/><circle fill="currentColor" cx="16.7" cy="5.4" r="1.35"/></svg>`;
+  if (name === "sun") return `<svg ${a}><circle fill="currentColor" cx="12" cy="12" r="4.2"/><g stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.1 5.1l1.6 1.6M17.3 17.3l1.6 1.6M5.1 18.9l1.6-1.6M17.3 6.7l1.6-1.6"/></g></svg>`;
+  if (name === "moon") return `<svg ${a}><path fill="currentColor" d="M14.8 2.6A9.5 9.5 0 1 0 21.4 15 7.6 7.6 0 0 1 14.8 2.6z"/><circle fill="currentColor" opacity=".35" cx="9.2" cy="10.2" r="1.1"/><circle fill="currentColor" opacity=".35" cx="12.4" cy="14.8" r=".8"/></svg>`;
+  if (name === "calendar") return `<svg ${a}><rect fill="currentColor" opacity=".2" x="3" y="6" width="18" height="15" rx="3"/><path fill="currentColor" d="M3 9h18v2.2H3z"/><rect fill="currentColor" x="3" y="6" width="18" height="3.2" rx="1.5"/><rect fill="currentColor" x="7" y="3" width="2" height="5" rx="1"/><rect fill="currentColor" x="15" y="3" width="2" height="5" rx="1"/><rect fill="currentColor" x="7" y="14" width="3.2" height="3.2" rx=".7"/><rect fill="currentColor" x="11.4" y="14" width="3.2" height="3.2" rx=".7"/><rect fill="currentColor" opacity=".45" x="15.8" y="14" width="3.2" height="3.2" rx=".7"/></svg>`;
+  if (name === "clock") return `<svg ${a}><circle fill="currentColor" opacity=".18" cx="12" cy="12" r="9.5"/><circle fill="none" stroke="currentColor" stroke-width="2.2" cx="12" cy="12" r="8.2"/><path stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M12 7.2v5.1l3.4 2"/></svg>`;
+  if (name === "heart") return `<svg ${a}><path fill="currentColor" d="M12 20.6S3.5 15.2 3.5 9.6A4.6 4.6 0 0 1 12 7.2a4.6 4.6 0 0 1 8.5 2.4C20.5 15.2 12 20.6 12 20.6z"/><path fill="#fff" opacity=".35" d="M8.2 8.4c1.4-.9 2.8-.3 3.4.6.4-.8 1.7-1.7 3.3-1.1-1.7.2-2.7 1.3-3.1 2.4-.6-1.2-1.9-2-3.6-1.9z"/></svg>`;
+  if (name === "chip") return `<svg ${a}><rect fill="currentColor" opacity=".2" x="6" y="6" width="12" height="12" rx="2"/><rect fill="currentColor" x="8" y="8" width="8" height="8" rx="1.2"/><path stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M9 3.5v2.2M12 3.5v2.2M15 3.5v2.2M9 18.3v2.2M12 18.3v2.2M15 18.3v2.2M3.5 9h2.2M3.5 12h2.2M3.5 15h2.2M18.3 9h2.2M18.3 12h2.2M18.3 15h2.2"/></svg>`;
+  return "";
 }
 
 function spaceOf(ev) {
@@ -124,10 +152,9 @@ function scheduleMeta(ev) {
   const bits = [SPACE_META[spaceOf(ev)]?.label, mode, s.time].filter(Boolean);
   const next = nextOccurrence(ev);
   if (next) {
-    const cal = ev.calendar === "lunar" ? "农历" : "阳历";
-    if (s.mode === "yearly" && s.month && s.day) bits.push(s.month + "/" + s.day + "(" + cal + ")");
-    if (s.mode === "monthly" && s.day) bits.push("每月" + s.day + "日");
-    bits.push(next.days === 0 ? "就是今天" : "剩" + next.days + "天，下次" + next.nextLabel);
+    if (next.anchorLabel) bits.push(next.anchorLabel);
+    bits.push(next.days === 0 ? "就是今天" : "剩" + next.days + "天");
+    if (next.pairLabel) bits.push(next.pairLabel);
     if (next.age != null) bits.push(next.age + "岁");
   }
   return bits.join(" · ");
@@ -138,10 +165,11 @@ function nextOccurrence(ev, forecastDays) {
   const s = ev.schedule || {};
   const now = new Date();
   const curY = now.getFullYear();
+  const isLunar = ev.calendar === "lunar";
   let t = null;
   let cycle = 365;
   if (s.mode === "yearly" && s.month && s.day) {
-    if (ev.calendar === "lunar") {
+    if (isLunar) {
       t = lunarToSolar(s.month, s.day, curY);
       if (!t) t = new Date(curY, s.month - 1, s.day);
       if (t < now) {
@@ -167,13 +195,38 @@ function nextOccurrence(ev, forecastDays) {
   if (!t) return null;
   const days = Math.max(0, Math.ceil((t - now) / 86400000));
   const wd = ["日", "一", "二", "三", "四", "五", "六"][t.getDay()];
-  const nextLabel = (t.getMonth() + 1) + "月" + t.getDate() + "日 周" + wd;
+  const nextLabel = formatSolarMD(t) + " 周" + wd;
   let age = null;
   if ((ev.type === "birthday" || ev.subtype === "birthday") && ev.birth_year) {
     age = t.getFullYear() - ev.birth_year;
   }
   const progress = Math.min(1, Math.max(0, 1 - days / cycle));
-  return { days, nextLabel, age, progress, date: t };
+
+  let anchorLabel = "";
+  let pairLabel = "";
+  let solarText = formatSolarMD(t);
+  let lunarText = "";
+  if (s.mode === "yearly" && s.month && s.day) {
+    if (isLunar) {
+      lunarText = LUNAR_MONTH_NAME[s.month] + s.day + "日";
+      anchorLabel = "农历" + lunarText;
+      pairLabel = "阳历" + solarText;
+    } else {
+      solarText = s.month + "月" + s.day + "日";
+      const lun = solarToLunar(t);
+      lunarText = lun ? lun.label : "";
+      anchorLabel = "阳历" + solarText;
+      pairLabel = lunarText ? "农历" + lunarText : "";
+    }
+  } else if (s.mode === "monthly" && s.day) {
+    anchorLabel = "每月" + s.day + "日";
+  }
+
+  return {
+    days, nextLabel, age, progress, date: t,
+    isLunar, anchorLabel, pairLabel, solarText, lunarText,
+    yearlySameSolar: s.mode === "yearly" && !isLunar
+  };
 }
 
 function countdownHeroHTML(ev, check, forecastDays) {
@@ -185,33 +238,348 @@ function countdownHeroHTML(ev, check, forecastDays) {
   const progress = next ? next.progress : 0;
   const dash = (progress * c).toFixed(1);
   const daysText = !next ? "—" : today ? "今" : String(next.days);
-  const unit = !next ? "" : today ? "天" : "天";
-  const sub = !next
-    ? "暂无下次日期"
-    : today
-      ? "就是今天"
-      : "下次 " + next.nextLabel;
+  const unit = !next ? "" : "天";
   const status = check
     ? `<p class="detail-status is-active">${esc(check.message)}</p>`
     : `<p class="detail-status">当前未到触发条件</p>`;
-  const age = next?.age != null ? `<span class="detail-chip">${next.age}岁</span>` : "";
-  const cal = ev.calendar === "lunar" ? `<span class="detail-chip">农历</span>` : "";
+
+  const isBday = ev.type === "birthday" || ev.subtype === "birthday";
+  const fun = birthdayFunFacts(ev, next);
+  const chips = [];
+  if (isBday) chips.push(`<span class="detail-chip with-icon">${iconSvg("cake")}生日</span>`);
+  if (next?.age != null) chips.push(`<span class="detail-chip">${next.age}岁</span>`);
+  if (fun) {
+    chips.push(`<span class="detail-chip">${fun.west.sym} ${fun.west.name}</span>`);
+    chips.push(`<span class="detail-chip">${fun.east.emoji} 属${fun.east.name}</span>`);
+  }
+  if (next?.isLunar) chips.push(`<span class="detail-chip with-icon">${iconSvg("moon")}农历</span>`);
+  else if (ev.schedule?.mode === "yearly") chips.push(`<span class="detail-chip with-icon">${iconSvg("sun")}阳历</span>`);
+
+  let dateBlock = `<p class="detail-next">${!next ? "暂无下次日期" : today ? "就是今天" : "下次 " + next.nextLabel}</p>`;
+  if (next && ev.schedule?.mode === "yearly" && (next.solarText || next.lunarText)) {
+    if (next.isLunar) {
+      dateBlock = `
+      <div class="cal-pair">
+        <div class="cal-row">
+          <span class="cal-ico">${iconSvg("moon")}</span>
+          <span class="cal-k">农历生日</span>
+          <span class="cal-v">${esc(next.lunarText)}</span>
+        </div>
+        <div class="cal-row highlight">
+          <span class="cal-ico">${iconSvg("sun")}</span>
+          <span class="cal-k">该年阳历</span>
+          <span class="cal-v">${esc(next.solarText)} · 周${["日","一","二","三","四","五","六"][next.date.getDay()]}</span>
+        </div>
+      </div>
+      <p class="detail-next-note">农历固定；阳历每年不同，见下方历年表</p>`;
+    } else {
+      dateBlock = `
+      <div class="cal-pair">
+        <div class="cal-row">
+          <span class="cal-ico">${iconSvg("sun")}</span>
+          <span class="cal-k">阳历日期</span>
+          <span class="cal-v">${esc(next.solarText)}</span>
+        </div>
+        <div class="cal-row">
+          <span class="cal-ico">${iconSvg("moon")}</span>
+          <span class="cal-k">对应农历</span>
+          <span class="cal-v">${esc(next.lunarText || "—")}</span>
+        </div>
+      </div>
+      <p class="detail-next-note">生日建议改用农历，每年阳历会变</p>`;
+    }
+  }
+
   return `
-    <div class="detail-countdown ${urgent ? "is-urgent" : ""} ${today ? "is-today" : ""}" aria-label="${esc(sub)}">
+    <div class="detail-countdown ${urgent ? "is-urgent" : ""} ${today ? "is-today" : ""}" aria-label="倒计时">
       <svg class="countdown-ring" viewBox="0 0 120 120" aria-hidden="true">
         <circle class="ring-track" cx="60" cy="60" r="${r}" />
         <circle class="ring-progress" cx="60" cy="60" r="${r}"
           style="--ring-len:${c}; --ring-dash:${dash}" />
       </svg>
       <div class="countdown-core">
-        <span class="countdown-num" data-count="${next ? next.days : ""}">${daysText}</span>
+        <span class="countdown-num">${daysText}</span>
         <span class="countdown-unit">${unit}</span>
       </div>
     </div>
     <div class="detail-copy">
-      <div class="detail-chips">${cal}${age}</div>
-      <p class="detail-next">${esc(sub)}</p>
+      <div class="detail-chips">${chips.join("")}</div>
+      ${dateBlock}
       ${status}
+    </div>`;
+}
+
+/** Build next N years of lunar↔solar birthday mappings for the chart. */
+function yearCalendarRows(ev, years = 8) {
+  const s = ev.schedule || {};
+  if (s.mode !== "yearly" || !s.month || !s.day) return [];
+  const isLunar = ev.calendar === "lunar";
+  const now = new Date();
+  const startY = now.getFullYear();
+  const rows = [];
+  for (let i = 0; i < years; i++) {
+    const y = startY + i;
+    let solar;
+    let lunarLabel;
+    if (isLunar) {
+      solar = lunarToSolar(s.month, s.day, y);
+      if (!solar) continue;
+      lunarLabel = LUNAR_MONTH_NAME[s.month] + s.day + "日";
+    } else {
+      solar = new Date(y, s.month - 1, s.day);
+      const lun = solarToLunar(solar);
+      lunarLabel = lun ? lun.label : "—";
+    }
+    const wd = ["日", "一", "二", "三", "四", "五", "六"][solar.getDay()];
+    const past = solar < now && !(solar.toDateString() === now.toDateString());
+    let age = null;
+    if ((ev.type === "birthday" || ev.subtype === "birthday") && ev.birth_year) {
+      age = y - ev.birth_year;
+    }
+    rows.push({
+      year: y,
+      solar,
+      solarLabel: formatSolarMD(solar) + " 周" + wd,
+      lunarLabel,
+      month: solar.getMonth() + 1,
+      past,
+      age,
+      isNext: false
+    });
+  }
+  let marked = false;
+  for (const r of rows) {
+    if (!r.past && !marked) { r.isNext = true; marked = true; }
+  }
+  return rows;
+}
+
+function zodiacWestern(month, day) {
+  const md = month * 100 + day;
+  const table = [
+    [120, "摩羯座", "♑"], [219, "水瓶座", "♒"], [320, "双鱼座", "♓"],
+    [420, "白羊座", "♈"], [521, "金牛座", "♉"], [621, "双子座", "♊"],
+    [722, "巨蟹座", "♋"], [823, "狮子座", "♌"], [923, "处女座", "♍"],
+    [1023, "天秤座", "♎"], [1122, "天蝎座", "♏"], [1222, "射手座", "♐"], [1231, "摩羯座", "♑"]
+  ];
+  for (const [end, name, sym] of table) {
+    if (md <= end) return { name, sym };
+  }
+  return { name: "摩羯座", sym: "♑" };
+}
+
+function zodiacChinese(year) {
+  const animals = ["鼠", "牛", "虎", "兔", "龙", "蛇", "马", "羊", "猴", "鸡", "狗", "猪"];
+  const emoji = ["🐭", "🐮", "🐯", "🐰", "🐲", "🐍", "🐴", "🐑", "🐵", "🐔", "🐶", "🐷"];
+  const idx = ((year - 1900) % 12 + 12) % 12;
+  return { name: animals[idx], emoji: emoji[idx] };
+}
+
+function wuxingOfYear(year) {
+  const stems = ["金", "金", "水", "水", "木", "木", "火", "火", "土", "土"];
+  return stems[((year % 10) + 10) % 10];
+}
+
+const ZODIAC_PROFILES = {
+  "白羊座": {
+    tag: "行动派", element: "火象",
+    blurb: "热情直球，想到就干。适合当冲锋的人，讨厌拖泥带水；记得给自己留一点喘息。",
+    keywords: ["勇敢", "直率", "开创"]
+  },
+  "金牛座": {
+    tag: "踏实派", element: "土象",
+    blurb: "讲究质感与稳定，一旦认定就不轻易变。慢热但可靠，享受把日子过成仪式感。",
+    keywords: ["稳重", "品味", "坚持"]
+  },
+  "双子座": {
+    tag: "灵光派", element: "风象",
+    blurb: "好奇心旺盛，脑子转得快，聊天能聊一整天。信息量很大，适合多线并行的生活。",
+    keywords: ["聪慧", "多变", "表达"]
+  },
+  "巨蟹座": {
+    tag: "守护派", element: "水象",
+    blurb: "重感情、护短，家与关系是安全感来源。外表柔和，内心其实很有主见。",
+    keywords: ["体贴", "直觉", "忠诚"]
+  },
+  "狮子座": {
+    tag: "光芒派", element: "火象",
+    blurb: "天生有舞台感，喜欢被看见也被信任。大方、有领导欲，也需要真诚的欣赏。",
+    keywords: ["自信", "热情", "气场"]
+  },
+  "处女座": {
+    tag: "精致派", element: "土象",
+    blurb: "眼里容不得潦草，细节控到骨子里。标准高不是挑剔，是认真对待人和事。",
+    keywords: ["细致", "理性", "完美"]
+  },
+  "天秤座": {
+    tag: "平衡派", element: "风象",
+    blurb: "在意和谐与美感，擅长协调不同意见。选择困难症？那是因为你太在乎公平。",
+    keywords: ["优雅", "公正", "社交"]
+  },
+  "天蝎座": {
+    tag: "洞察派", element: "水象",
+    blurb: "感知力强，看人很准。外表冷静，内心波涛汹涌；一旦信任，会很深很久。",
+    keywords: ["深沉", "专注", "锋利"]
+  },
+  "射手座": {
+    tag: "自由派", element: "火象",
+    blurb: "向往远方与新鲜事，乐观到有点欠打。讨厌被框住，最怕无聊的重复。",
+    keywords: ["洒脱", "好奇", "坦诚"]
+  },
+  "摩羯座": {
+    tag: "攀登派", element: "土象",
+    blurb: "目标感强，愿意为长远结果熬。外表克制，实则野心和责任心都很大。",
+    keywords: ["坚韧", "务实", "自律"]
+  },
+  "水瓶座": {
+    tag: "脑洞派", element: "风象",
+    blurb: "想法常领先半步，独立又讲义气。不喜欢随大流，更爱自己的节奏和朋友圈。",
+    keywords: ["独特", "理想", "疏离感"]
+  },
+  "双鱼座": {
+    tag: "想象派", element: "水象",
+    blurb: "共情力满格，容易被氛围和故事打动。世界对他们来说可以很柔软，也可以很梦幻。",
+    keywords: ["浪漫", "敏感", "慈悲"]
+  }
+};
+
+const SHENGXIAO_BLURB = {
+  "鼠": "机灵会抓机会", "牛": "踏实能扛事", "虎": "有魄力敢冲",
+  "兔": "细腻会照顾人", "龙": "气场足有格局", "蛇": "冷静有洞见",
+  "马": "热情闲不住", "羊": "温柔重情义", "猴": "聪明爱折腾",
+  "鸡": "讲究有条理", "狗": "忠诚讲信用", "猪": "豁达爱生活"
+};
+
+function birthdayFunFacts(ev, next) {
+  const isBday = ev.type === "birthday" || ev.subtype === "birthday";
+  if (!isBday || !next?.date) return null;
+  let westDate = next.date;
+  if (ev.birth_year && ev.calendar === "lunar" && ev.schedule?.month && ev.schedule?.day) {
+    const bornSolar = lunarToSolar(ev.schedule.month, ev.schedule.day, ev.birth_year);
+    if (bornSolar) westDate = bornSolar;
+  } else if (ev.birth_year && ev.calendar !== "lunar" && ev.schedule?.month && ev.schedule?.day) {
+    westDate = new Date(ev.birth_year, ev.schedule.month - 1, ev.schedule.day);
+  }
+  const west = zodiacWestern(westDate.getMonth() + 1, westDate.getDate());
+  const yearForShengxiao = ev.birth_year || next.date.getFullYear();
+  const east = zodiacChinese(yearForShengxiao);
+  const wx = wuxingOfYear(yearForShengxiao);
+  const profile = ZODIAC_PROFILES[west.name] || {
+    tag: "好运连连", element: "—", blurb: "独一无二的你，继续被轻轻推醒就好。", keywords: ["特别"]
+  };
+  return {
+    west, east, wx, profile,
+    trait: profile.tag,
+    solarHint: `${westDate.getMonth() + 1}月${westDate.getDate()}日`,
+    shengxiaoBlurb: SHENGXIAO_BLURB[east.name] || "好运常在",
+    ageNow: ev.birth_year ? (new Date().getFullYear() - ev.birth_year) : null
+  };
+}
+
+function funFactsHTML(ev, forecastDays) {
+  const next = nextOccurrence(ev, forecastDays);
+  const fun = birthdayFunFacts(ev, next);
+  if (!fun) return "";
+  const kw = (fun.profile.keywords || []).map((k) => `<span class="fun-kw">${esc(k)}</span>`).join("");
+  return `
+    <div class="span-2 fun-facts-card">
+      <div class="fun-bento">
+        <article class="fun-feature" style="--i:0">
+          <div class="fun-feature-top">
+            <span class="fun-sym huge">${fun.west.sym}</span>
+            <div>
+              <p class="fun-k">星座档案</p>
+              <h3 class="fun-feature-title">${esc(fun.west.name)}</h3>
+              <p class="fun-feature-tag">${esc(fun.profile.element)} · ${esc(fun.profile.tag)}</p>
+            </div>
+          </div>
+          <p class="fun-blurb">${esc(fun.profile.blurb)}</p>
+          <div class="fun-kw-row">${kw}</div>
+          <p class="fun-sub">推算参考阳历 ${esc(fun.solarHint)}${ev.birth_year ? " · 出生年 " + esc(String(ev.birth_year)) : ""}</p>
+        </article>
+        <aside class="fun-side">
+          <div class="fun-tile" style="--i:1">
+            <div class="fun-sym">${fun.east.emoji}</div>
+            <div class="fun-k">生肖</div>
+            <div class="fun-v">属${esc(fun.east.name)}</div>
+            <div class="fun-sub">${esc(fun.shengxiaoBlurb)}</div>
+          </div>
+          <div class="fun-tile accent" style="--i:2">
+            <div class="fun-sym">✦</div>
+            <div class="fun-k">五行</div>
+            <div class="fun-v">${esc(fun.wx)}</div>
+            <div class="fun-sub">年柱简推 · 仅供玩乐</div>
+          </div>
+          <div class="fun-tile wide" style="--i:3">
+            <div class="fun-inline">
+              <span class="fun-sym">${next && next.days === 0 ? "🎂" : "⏳"}</span>
+              <div>
+                <div class="fun-k">距离下次</div>
+                <div class="fun-v">${next ? (next.days === 0 ? "就是今天" : next.days + " 天") : "—"}</div>
+                <div class="fun-sub">${fun.ageNow != null ? "大约 " + fun.ageNow + " 周岁" : "轻推一下，刚好想起"}</div>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>`;
+}
+
+function yearCalendarChartHTML(ev) {
+  const s = ev.schedule || {};
+  if (s.mode !== "yearly" || !s.month || !s.day) return "";
+  const lunarMode = ev.calendar === "lunar";
+  const rows = yearCalendarRows(ev, 8);
+  if (!rows.length) return "";
+
+  if (lunarMode) {
+    const lunarName = LUNAR_MONTH_NAME[s.month] + s.day + "日";
+    const tableRows = rows.map((r, i) => `
+      <tr class="${r.isNext ? "is-next" : ""} ${r.past ? "is-past" : ""}" style="--row:${i}">
+        <td>${r.year}${r.isNext ? '<span class="tag-next">下次</span>' : ""}</td>
+        <td class="mono">${esc(lunarName)}</td>
+        <td><strong>${esc(formatSolarMD(r.solar))}</strong> <span class="wd">周${["日","一","二","三","四","五","六"][r.solar.getDay()]}</span></td>
+        <td>${r.age != null ? r.age + "岁" : "—"}</td>
+      </tr>`).join("");
+    return `
+      <div class="nudge-card span-2 cal-chart-card">
+        <div class="section-title">
+          <h3><span class="title-ico sm">${iconSvg("calendar")}</span> 历年阳历日期</h3>
+        </div>
+        <p class="form-hint">农历 <strong>${esc(lunarName)}</strong> 每年固定；下表是各年对应的<strong>阳历几月几号</strong>。</p>
+        <div class="cal-table-wrap">
+          <table class="cal-table">
+            <thead>
+              <tr>
+                <th>年份</th>
+                <th>农历生日</th>
+                <th>该年阳历</th>
+                <th>岁</th>
+              </tr>
+            </thead>
+            <tbody>${tableRows}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  const tableRows = rows.map((r, i) => `
+    <tr class="${r.isNext ? "is-next" : ""} ${r.past ? "is-past" : ""}" style="--row:${i}">
+      <td>${r.year}${r.isNext ? '<span class="tag-next">下次</span>' : ""}</td>
+      <td>${esc(r.solarLabel)}</td>
+      <td>${esc(r.lunarLabel)}</td>
+      <td>${r.age != null ? r.age + "岁" : "—"}</td>
+    </tr>`).join("");
+  return `
+    <div class="nudge-card span-2 cal-chart-card">
+      <div class="section-title"><h3><span class="title-ico sm">${iconSvg("calendar")}</span> 历年对照</h3></div>
+      <p class="form-hint">阳历固定日；下表为对应农历。</p>
+      <div class="cal-table-wrap">
+        <table class="cal-table">
+          <thead><tr><th>年份</th><th>阳历</th><th>对应农历</th><th>岁</th></tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>
     </div>`;
 }
 
@@ -533,12 +901,17 @@ function eventCard(ev) {
     }
     ageLabel = " · " + (next.getFullYear() - ev.birth_year) + "岁";
   }
-  const calBadge = ev.calendar === "lunar" ? '<span class="badge">农历</span>' : "";
+  const calBadge = ev.calendar === "lunar"
+    ? `<span class="badge with-icon">${iconSvg("moon")}农历</span>`
+    : (ev.schedule?.mode === "yearly" ? `<span class="badge with-icon">${iconSvg("sun")}阳历</span>` : "");
+  const typeBadge = (ev.type === "birthday" || ev.subtype === "birthday")
+    ? `<span class="badge with-icon">${iconSvg("cake")}生日</span>`
+    : "";
   return `<article class="nudge-card clickable space-${space} ${esc(ev.type)}" data-open="${ev.id}">
     <div class="rail"></div>
     <div class="card-top">
       <div class="title">${esc(ev.name)}${ageLabel}</div>
-      <div class="badge-row">${spaceBadge(space)}${calBadge}${ev.archived ? `<span class="badge">已归档</span>` : ev.enabled ? "" : `<span class="badge">停用</span>`}</div>
+      <div class="badge-row">${spaceBadge(space)}${typeBadge}${calBadge}${ev.archived ? `<span class="badge">已归档</span>` : ev.enabled ? "" : `<span class="badge">停用</span>`}</div>
     </div>
     <div class="meta">${esc(scheduleMeta(ev))}</div>
     <div class="card-foot">
@@ -627,14 +1000,17 @@ async function renderDetail(el, id) {
     ({ daily: "每天", weekly: "每周", monthly: "每月", yearly: "每年", cycle: "周期" })[ev.schedule?.mode] || "",
     ev.schedule?.time || ""
   ].filter(Boolean);
+  const isBday = ev.type === "birthday" || ev.subtype === "birthday";
+  const titleIcon = isBday ? "cake" : ev.type === "period" ? "heart" : space === "task" ? "calendar" : "clock";
   el.innerHTML = `
     <div class="detail-page">
       <button class="btn-secondary btn-small detail-back" id="back-events" type="button">← 返回清单</button>
       <article class="detail-hero ${esc(ev.type)} space-${space}">
+        <div class="hero-sparkles" aria-hidden="true"></div>
         <div class="detail-hero-top">
           <div class="detail-identity">
             <div class="eyebrow">${SPACE_META[space].label}${ev.subtype ? " · " + esc(ev.subtype) : ""}</div>
-            <h2>${esc(ev.name)}</h2>
+            <h2 class="detail-title"><span class="title-ico" aria-hidden="true">${iconSvg(titleIcon)}</span>${esc(ev.name)}</h2>
             <p class="detail-meta">${esc(metaBits.join(" · "))}</p>
           </div>
           <div class="detail-hero-focus">
@@ -653,7 +1029,9 @@ async function renderDetail(el, id) {
         <p class="detail-hint">确认请在飞书点「已收到」。待办确认后会归档；保存不会立刻推送。</p>
       </article>
       <div class="card-grid detail-below">
+        ${funFactsHTML(ev, forecastDays)}
         ${ev.type === "period" ? periodForecastHTML(res.period) : ""}
+        ${yearCalendarChartHTML(ev)}
         <div class="nudge-card span-2 detail-history">
           <div class="section-title"><h3>推送记录</h3></div>
           ${hist.length ? hist.map(timelineRow).join("") : `<div class="empty-state soft"><p>还没有推送记录</p></div>`}
@@ -1021,12 +1399,13 @@ function eventFormHTML(ev, spaceHint) {
         <div class="form-row">
           <div class="form-group"><label>历法</label>
             <select name="calendar">
-              <option value="solar" ${(ev?.calendar || "solar") !== "lunar" ? "selected" : ""}>阳历</option>
-              <option value="lunar" ${ev?.calendar === "lunar" ? "selected" : ""}>农历</option>
+              <option value="lunar" ${(ev?.calendar || "lunar") === "lunar" ? "selected" : ""}>农历（推荐，阳历每年不同）</option>
+              <option value="solar" ${ev?.calendar === "solar" ? "selected" : ""}>阳历（公历，每年同日）</option>
             </select>
           </div>
-          <div class="form-group"><label>出生年（可选）</label><input name="birth_year" type="number" min="1900" max="2100" placeholder="如 1990" value="${ev?.birth_year || ""}"></div>
+          <div class="form-group"><label>出生年（可选）</label><input name="birth_year" type="number" min="1900" max="2100" placeholder="如 2000" value="${ev?.birth_year || ""}"></div>
         </div>
+        <p class="form-hint cal-hint">过农历生日请选农历，填写正月=1、廿六=26。下方历年表会列出每年对应的阳历几月几号。</p>
         <div class="form-row">
           <div class="form-group"><label>提前（天）</label><input name="remind_ahead" type="number" min="0" value="${ev?.remind_ahead ?? 3}"></div>
           <div class="form-group"><label>推送时刻</label><input name="time" type="time" value="${s.time || "09:00"}"></div>
@@ -1048,8 +1427,8 @@ function eventFormHTML(ev, spaceHint) {
         <div class="form-row">
           <div class="form-group"><label>历法</label>
             <select name="calendar_a">
-              <option value="solar" ${(ev?.calendar || "solar") !== "lunar" ? "selected" : ""}>阳历</option>
-              <option value="lunar" ${ev?.calendar === "lunar" ? "selected" : ""}>农历</option>
+              <option value="solar" ${(ev?.calendar || "solar") !== "lunar" ? "selected" : ""}>阳历（公历，每年同日）</option>
+              <option value="lunar" ${ev?.calendar === "lunar" ? "selected" : ""}>农历（阴历，阳历日每年会变）</option>
             </select>
           </div>
           <div class="form-group"><label>推送时刻</label><input name="time_anni" type="time" value="${s.time || "09:00"}"></div>
@@ -1132,7 +1511,7 @@ function setupEventForm(modal, ev, spaceHint) {
     if (space === "moment" && subtype === "birthday") {
       body = {
         space, subtype, name: fd.get("name"),
-        calendar: fd.get("calendar") === "lunar" ? "lunar" : "solar",
+        calendar: fd.get("calendar") === "solar" ? "solar" : "lunar",
         birth_year: fd.get("birth_year") ? +fd.get("birth_year") : undefined,
         remind_ahead: +fd.get("remind_ahead") || 0,
         schedule: { mode: "yearly", month: +fd.get("month"), day: +fd.get("day"), time: fd.get("time") || "09:00" },

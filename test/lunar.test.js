@@ -55,4 +55,13 @@ describe('lunar calendar', () => {
     assert.equal(out.birth_year, 1965);
     assert.equal(out.type, 'birthday');
   });
+
+  it('solarToLunar returns month/day for a Gregorian date', () => {
+    const { solarToLunar } = require('../lib/lunar');
+    const r = solarToLunar(new Date(2026, 2, 4)); // 2026-03-04
+    assert.ok(r);
+    assert.ok(r.month >= 1 && r.month <= 12);
+    assert.ok(r.day >= 1 && r.day <= 30);
+    assert.match(r.label, /月.*日/);
+  });
 });
