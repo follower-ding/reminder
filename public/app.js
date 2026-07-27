@@ -2,6 +2,8 @@
 const API = "/api";
 const BRAND = { name: "Nudge", tagline: "轻推一下，刚好想起" };
 const HINT_KEY = "nudge_hide_feishu_hint";
+const VERSION_KEY = "nudge_app_version";
+const SKIP_UPDATE_KEY = "nudge_skip_update";
 let token = localStorage.getItem("nudge_token") || localStorage.getItem("reminder_token") || "";
 let currentUser = null;
 let currentView = "today";
@@ -48,6 +50,76 @@ function toast(msg) {
   el.textContent = msg;
   el.classList.add("show");
   setTimeout(() => el.classList.remove("show"), 2800);
+}
+
+async function forceAppUpdate(targetVersion) {
+  try {
+    if (navigator.serviceWorker) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((r) => r.unregister()));
+    }
+    if (window.caches) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    }
+  } catch (_) { /* ignore */ }
+  if (targetVersion) localStorage.setItem(VERSION_KEY, targetVersion);
+  const u = new URL(location.href);
+  u.searchParams.set("_t", String(Date.now()));
+  location.replace(u.pathname + u.search + (u.hash || ""));
+}
+
+async function checkAndApplyUpdate() {
+  const health = await api("/health");
+  if (health.error || !health.version) {
+    toast(health.error || "无法获取版本");
+    return;
+  }
+  const server = String(health.version);
+  const local = localStorage.getItem(VERSION_KEY) || "";
+  if (local && local === server) {
+    toast("已是最新 v" + server);
+    return;
+  }
+  toast("正在更新到 v" + server + "…");
+  await forceAppUpdate(server);
+}
+
+function showUpdateBanner(serverVersion) {
+  if (document.getElementById("update-banner")) return;
+  const bar = document.createElement("div");
+  bar.id = "update-banner";
+  bar.className = "update-banner";
+  bar.setAttribute("role", "status");
+  bar.innerHTML = `
+    <span>发现新版本 v${esc(serverVersion)}</span>
+    <span class="update-banner-actions">
+      <button type="button" class="btn-primary btn-small" id="update-now">更新</button>
+      <button type="button" class="btn-ghost btn-small" id="update-later">稍后</button>
+    </span>`;
+  const header = document.querySelector(".app-header");
+  if (header && header.parentNode) header.insertAdjacentElement("afterend", bar);
+  else document.getElementById("app").prepend(bar);
+  document.getElementById("update-now").onclick = () => forceAppUpdate(serverVersion);
+  document.getElementById("update-later").onclick = () => {
+    sessionStorage.setItem(SKIP_UPDATE_KEY, "1");
+    bar.remove();
+  };
+}
+
+async function maybePromptUpdate() {
+  if (sessionStorage.getItem(SKIP_UPDATE_KEY) === "1") return;
+  try {
+    const health = await api("/health");
+    const server = health.version ? String(health.version) : "";
+    if (!server) return;
+    const local = localStorage.getItem(VERSION_KEY);
+    if (!local) {
+      localStorage.setItem(VERSION_KEY, server);
+      return;
+    }
+    if (local !== server) showUpdateBanner(server);
+  } catch (_) { /* ignore */ }
 }
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -623,6 +695,7 @@ function showApp() {
   document.getElementById("app").style.display = "block";
   document.getElementById("user-label").textContent = currentUser?.label || labelFromToken(token) || "";
   renderView(currentView);
+  maybePromptUpdate();
 }
 async function consumeAckQuery() {
   const q = new URLSearchParams(location.search);
@@ -1221,6 +1294,14 @@ async function renderSettings(el) {
   if (config.error) { el.innerHTML = `<div class="empty-state"><p>${esc(config.error)}</p></div>`; return; }
   el.innerHTML = `
     <div class="hero"><div><div class="eyebrow">Settings</div><h2>设置</h2><p class="sub">v${esc(health.version || "4.1")} · ${esc(health.persistence?.backend || "")}</p></div></div>
+    <div class="nudge-card" style="margin-bottom:1rem">
+      <h3 style="margin-bottom:.5rem">客户端更新</h3>
+      <p class="form-hint">日常推送部署无需重装 App。点下方可清缓存并拉取最新页面。</p>
+      <div class="action-btns">
+        <button class="btn-primary btn-small" id="btn-check-update" type="button">检查并更新</button>
+        <button class="btn-secondary btn-small" id="btn-force-refresh" type="button">强制刷新</button>
+      </div>
+    </div>
     <div class="card-grid">
       <div class="nudge-card">
         <div class="toggle-row"><span><strong>DeepSeek</strong></span><span class="badge ${config.deepseek?.configured ? "ok" : "fail"}">${config.deepseek?.configured ? "已配置" : "未配置"}</span></div>
@@ -1269,6 +1350,12 @@ async function renderSettings(el) {
     </div>
   `;
   ["tog-fs", "tog-sc"].forEach((id) => { document.getElementById(id).onclick = function () { this.classList.toggle("on"); }; });
+  document.getElementById("btn-check-update").onclick = () => checkAndApplyUpdate();
+  document.getElementById("btn-force-refresh").onclick = async () => {
+    const h = await api("/health");
+    toast("正在刷新…");
+    await forceAppUpdate(h.version || localStorage.getItem(VERSION_KEY) || "");
+  };
   document.getElementById("save-fs").onclick = async () => {
     const c = await api("/config");
     c.feishu = {
@@ -1583,3 +1670,6 @@ document.getElementById("tab-bar").addEventListener("click", (e) => {
   if (btn) renderView(btn.dataset.view);
 });
 boot();
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
