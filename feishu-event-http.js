@@ -58,13 +58,19 @@ async function listPendingToday() {
   const data = await loadData();
   const n = nowParts();
   const todayStr = dateStr();
+  const { computeStreak, isStreakEligible } = require('./lib/streak');
   const pending = [];
   for (const raw of migrateEvents(data.events)) {
     if (!raw.enabled || isAcked(raw, todayStr)) continue;
     const r = checkEvent(raw, n);
     if (!r || !r.active) continue;
     if (r.days === 0 || r.cycleDay !== undefined) {
-      pending.push({ id: raw.id, name: raw.name, message: r.message });
+      pending.push({
+        id: raw.id,
+        name: raw.name,
+        message: r.message,
+        streak: isStreakEligible(raw) ? computeStreak(raw.acks, todayStr) : null
+      });
     }
   }
   return pending;
@@ -258,7 +264,10 @@ async function answerQa(intent, userText) {
   if (intent === 'today') {
     const pending = await listPendingToday();
     if (!pending.length) return { text: '今天没有待确认的事项，都搞定了。' };
-    const lines = pending.map((p) => `• ${p.name}${p.message ? `：${p.message}` : ''}`);
+    const lines = pending.map((p) => {
+      const st = p.streak?.days >= 2 ? `（连续 ${p.streak.days} 天）` : '';
+      return `• ${p.name}${st}${p.message ? `：${p.message}` : ''}`;
+    });
     return { text: `今日待确认（${pending.length}）：\n${lines.join('\n')}\n\n回「收到」可一键确认。` };
   }
 

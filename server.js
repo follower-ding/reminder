@@ -320,6 +320,7 @@ app.get('/api/dashboard', async (req, res) => {
     const data = await loadData();
     const n = now();
     const todayStr = dateStr();
+    const { computeStreak, isStreakEligible } = require('./lib/streak');
     const events = migrateEvents(data.events);
     const pending = [];
     const done = [];
@@ -337,7 +338,8 @@ app.get('/api/dashboard', async (req, res) => {
         space: ev.space,
         time: ev.schedule?.time || null,
         name: ev.name,
-        archived: isArchived(ev)
+        archived: isArchived(ev),
+        streak: isStreakEligible(ev) ? computeStreak(ev.acks, todayStr) : null
       };
       if (r.days === 0 || r.cycleDay !== undefined) {
         if (ackedToday) done.push({ ...row, acked: true, ack: ev.acks[todayStr] });
@@ -610,7 +612,7 @@ app.get('/api/health', async (req, res) => {
     res.json({
       status: 'ok',
       time: dateStr(),
-      version: '4.1.28',
+      version: '4.1.29',
       brand: BRAND.name,
       app_url: APP_URL,
       deepseek: { configured: !!process.env.DEEPSEEK_API_KEY },
@@ -1008,6 +1010,8 @@ app.get('/api/events/:id/detail', async (req, res) => {
     const n = now();
     const check = checkEvent(ev, n);
     const history = ledger.listByItem(data.push_ledger, id);
+    const { computeStreak, isStreakEligible } = require('./lib/streak');
+    const streak = isStreakEligible(ev) ? computeStreak(ev.acks, dateStr()) : null;
     let period = null;
     if (ev.type === 'period') {
       const forecast = predictPeriod(ev.schedule || {}, n);
@@ -1029,7 +1033,7 @@ app.get('/api/events/:id/detail', async (req, res) => {
         timeline: forecast ? buildCycleTimeline(forecast) : null
       };
     }
-    res.json({ item: ev, check, push_history: history, period, brand: BRAND });
+    res.json({ item: ev, check, push_history: history, period, streak, brand: BRAND });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

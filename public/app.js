@@ -1021,6 +1021,10 @@ function pendingCard(r, idx = 0) {
   const count = r._count > 1 ? `<span class="badge soft-count">×${r._count}</span>` : "";
   const care = r.care;
   const careBadge = care ? `<span class="badge care">关怀</span>` : "";
+  const streak = r.streak;
+  const streakBadge = streak?.days >= 2
+    ? `<span class="badge streak" title="历史最长 ${streak.best || streak.days} 天">连续 ${streak.days}</span>`
+    : (streak?.days === 1 && streak.active_today ? `<span class="badge streak soft">已打卡</span>` : "");
   const msg = cleanText(r.message || "");
   const careLine = care?.sweet
     ? `<p class="action-care">${esc(care.sweet)}</p>`
@@ -1028,24 +1032,31 @@ function pendingCard(r, idx = 0) {
   const dayBit = care?.day != null
     ? ` · Day ${care.day}`
     : (r.cycleDay != null ? ` · 第 ${r.cycleDay} 天` : "");
-  return `<article class="action-card ${esc(space)} ${esc(r.type || "")}${care ? " has-care" : ""}${r.urgent ? " is-urgent" : ""}" data-open="${r.eventId || ""}" style="animation-delay:${Math.min(idx, 8) * 40}ms">
+  const streakHint = streak?.days >= 2 && !streak.active_today
+    ? `<p class="action-streak">保持连续 ${streak.days} 天 · 飞书点「已收到」继续</p>`
+    : "";
+  return `<article class="action-card ${esc(space)} ${esc(r.type || "")}${care ? " has-care" : ""}${r.urgent ? " is-urgent" : ""}${streak?.days >= 2 ? " has-streak" : ""}" data-open="${r.eventId || ""}" style="animation-delay:${Math.min(idx, 8) * 40}ms">
     <div class="action-rail" aria-hidden="true"></div>
     <div class="action-main">
       <div class="action-top">
-        <h3>${esc(r.name || "")}${count}${careBadge}</h3>
+        <h3>${esc(r.name || "")}${count}${careBadge}${streakBadge}</h3>
         ${spaceBadge(space)}
       </div>
       <p class="action-meta">${r.time ? esc(r.time) + " · " : ""}${esc(typeLabel(r.type))}${dayBit}</p>
       ${careLine}
+      ${streakHint}
       <p class="action-go">${care ? "查看今日关怀" : "查看详情"}</p>
     </div>
   </article>`;
 }
 function doneCard(r) {
+  const streakBit = r.streak?.days >= 2
+    ? `<span class="badge streak">连续 ${r.streak.days}</span>`
+    : "";
   return `<div class="done-row" data-open="${r.eventId || ""}">
     <span class="done-check" aria-hidden="true">✓</span>
     <div class="done-main">
-      <div class="done-name">${esc(r.name || "")}${r.archived ? `<span class="badge">已归档</span>` : ""}</div>
+      <div class="done-name">${esc(r.name || "")}${r.archived ? `<span class="badge">已归档</span>` : ""}${streakBit}</div>
       <div class="form-hint">${esc(cleanText(r.message || ""))}</div>
     </div>
     <button type="button" class="btn-secondary btn-small" data-unack="${r.eventId || ""}" aria-label="撤销确认">撤销</button>
@@ -1316,6 +1327,22 @@ function periodForecastHTML(period) {
     </div>`;
 }
 
+function streakCardHTML(streak) {
+  if (!streak) return "";
+  const days = streak.days || 0;
+  const best = streak.best || days;
+  const status = streak.active_today
+    ? "今天已确认，连续在延续"
+    : (days > 0 ? "今天还没确认，飞书点「已收到」可续上" : "确认一次后开始累计连续天数");
+  return `
+    <div class="nudge-card streak-card">
+      <div class="section-title"><h3>连续打卡</h3></div>
+      <div class="streak-num">${days}</div>
+      <p class="streak-meta">天 · 历史最长 ${best} 天</p>
+      <p class="form-hint" style="margin-top:.55rem">${esc(status)}</p>
+    </div>`;
+}
+
 async function renderDetail(el, id) {
   el.innerHTML = `<div class="empty-state"><p>加载中…</p></div>`;
   const res = await api("/events/" + id + "/detail");
@@ -1364,6 +1391,7 @@ async function renderDetail(el, id) {
       </article>
       <div class="card-grid detail-below">
         ${funFactsHTML(ev, forecastDays)}
+        ${streakCardHTML(res.streak)}
         ${ev.type === "period" ? periodForecastHTML(res.period) : ""}
         ${yearCalendarChartHTML(ev)}
         <div class="nudge-card span-2 detail-history">
