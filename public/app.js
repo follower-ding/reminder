@@ -122,38 +122,97 @@ function scheduleMeta(ev) {
   const s = ev.schedule || {};
   const mode = { daily: "每天", weekly: "每周", monthly: "每月", yearly: "每年", cycle: "周期" }[s.mode] || "";
   const bits = [SPACE_META[spaceOf(ev)]?.label, mode, s.time].filter(Boolean);
-  if (s.mode === "yearly" && s.month && s.day) {
+  const next = nextOccurrence(ev);
+  if (next) {
     const cal = ev.calendar === "lunar" ? "农历" : "阳历";
-    const now = new Date();
-    const curY = now.getFullYear();
-    let t;
+    if (s.mode === "yearly" && s.month && s.day) bits.push(s.month + "/" + s.day + "(" + cal + ")");
+    if (s.mode === "monthly" && s.day) bits.push("每月" + s.day + "日");
+    bits.push(next.days === 0 ? "就是今天" : "剩" + next.days + "天，下次" + next.nextLabel);
+    if (next.age != null) bits.push(next.age + "岁");
+  }
+  return bits.join(" · ");
+}
+
+/** Next occurrence for yearly/monthly (and period via forecastDays). */
+function nextOccurrence(ev, forecastDays) {
+  const s = ev.schedule || {};
+  const now = new Date();
+  const curY = now.getFullYear();
+  let t = null;
+  let cycle = 365;
+  if (s.mode === "yearly" && s.month && s.day) {
     if (ev.calendar === "lunar") {
       t = lunarToSolar(s.month, s.day, curY);
       if (!t) t = new Date(curY, s.month - 1, s.day);
       if (t < now) {
         const t2 = lunarToSolar(s.month, s.day, curY + 1);
-        if (t2) t = t2;
-        else t = new Date(curY + 1, s.month - 1, s.day);
+        t = t2 || new Date(curY + 1, s.month - 1, s.day);
       }
     } else {
       t = new Date(curY, s.month - 1, s.day);
       if (t < now) t = new Date(curY + 1, s.month - 1, s.day);
     }
-    const diff = Math.ceil((t - now) / 86400000);
-    const wd = ["日", "一", "二", "三", "四", "五", "六"][t.getDay()];
-    bits.push(s.month + "/" + s.day + "(" + cal + ")");
-    bits.push("剩" + diff + "天，下次" + (t.getMonth() + 1) + "月" + t.getDate() + "日 周" + wd);
-    if ((ev.type === "birthday" || ev.subtype === "birthday") && ev.birth_year) {
-      bits.push((t.getFullYear() - ev.birth_year) + "岁");
-    }
-  }
-  if (s.mode === "monthly" && s.day) {
-    const now = new Date();
-    let t = new Date(now.getFullYear(), now.getMonth(), s.day);
+    cycle = 366;
+  } else if (s.mode === "monthly" && s.day) {
+    t = new Date(now.getFullYear(), now.getMonth(), s.day);
     if (t < now) t = new Date(now.getFullYear(), now.getMonth() + 1, s.day);
-    bits.push("剩" + Math.ceil((t - now) / 86400000) + "天");
+    cycle = 31;
+  } else if (s.mode === "daily") {
+    t = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    cycle = 1;
+  } else if (s.mode === "cycle" && forecastDays != null && Number.isFinite(forecastDays)) {
+    t = new Date(now.getFullYear(), now.getMonth(), now.getDate() + forecastDays);
+    cycle = 28;
   }
-  return bits.join(" · ");
+  if (!t) return null;
+  const days = Math.max(0, Math.ceil((t - now) / 86400000));
+  const wd = ["日", "一", "二", "三", "四", "五", "六"][t.getDay()];
+  const nextLabel = (t.getMonth() + 1) + "月" + t.getDate() + "日 周" + wd;
+  let age = null;
+  if ((ev.type === "birthday" || ev.subtype === "birthday") && ev.birth_year) {
+    age = t.getFullYear() - ev.birth_year;
+  }
+  const progress = Math.min(1, Math.max(0, 1 - days / cycle));
+  return { days, nextLabel, age, progress, date: t };
+}
+
+function countdownHeroHTML(ev, check, forecastDays) {
+  const next = nextOccurrence(ev, forecastDays);
+  const urgent = next && next.days <= 3;
+  const today = next && next.days === 0;
+  const r = 54;
+  const c = 2 * Math.PI * r;
+  const progress = next ? next.progress : 0;
+  const dash = (progress * c).toFixed(1);
+  const daysText = !next ? "—" : today ? "今" : String(next.days);
+  const unit = !next ? "" : today ? "天" : "天";
+  const sub = !next
+    ? "暂无下次日期"
+    : today
+      ? "就是今天"
+      : "下次 " + next.nextLabel;
+  const status = check
+    ? `<p class="detail-status is-active">${esc(check.message)}</p>`
+    : `<p class="detail-status">当前未到触发条件</p>`;
+  const age = next?.age != null ? `<span class="detail-chip">${next.age}岁</span>` : "";
+  const cal = ev.calendar === "lunar" ? `<span class="detail-chip">农历</span>` : "";
+  return `
+    <div class="detail-countdown ${urgent ? "is-urgent" : ""} ${today ? "is-today" : ""}" aria-label="${esc(sub)}">
+      <svg class="countdown-ring" viewBox="0 0 120 120" aria-hidden="true">
+        <circle class="ring-track" cx="60" cy="60" r="${r}" />
+        <circle class="ring-progress" cx="60" cy="60" r="${r}"
+          style="--ring-len:${c}; --ring-dash:${dash}" />
+      </svg>
+      <div class="countdown-core">
+        <span class="countdown-num" data-count="${next ? next.days : ""}">${daysText}</span>
+        <span class="countdown-unit">${unit}</span>
+      </div>
+    </div>
+    <div class="detail-copy">
+      <div class="detail-chips">${cal}${age}</div>
+      <p class="detail-next">${esc(sub)}</p>
+      ${status}
+    </div>`;
 }
 
 async function login() {
@@ -562,30 +621,43 @@ async function renderDetail(el, id) {
   const ev = res.item;
   const hist = res.push_history || [];
   const space = spaceOf(ev);
+  const forecastDays = res.period?.forecast?.days_to_next;
+  const metaBits = [
+    SPACE_META[space].label,
+    ({ daily: "每天", weekly: "每周", monthly: "每月", yearly: "每年", cycle: "周期" })[ev.schedule?.mode] || "",
+    ev.schedule?.time || ""
+  ].filter(Boolean);
   el.innerHTML = `
-    <button class="btn-secondary btn-small" id="back-events" type="button" style="margin-bottom:.8rem">← 返回清单</button>
-    <div class="detail-hero ${esc(ev.type)} space-${space}">
-      <div class="eyebrow">${SPACE_META[space].label}${ev.subtype ? " · " + esc(ev.subtype) : ""}</div>
-      <h2>${esc(ev.name)}</h2>
-      <p class="form-hint">${esc(scheduleMeta(ev))}</p>
-      ${res.check ? `<p class="detail-msg">${esc(res.check.message)}</p>` : `<p class="form-hint" style="margin-top:.55rem">当前未到触发条件</p>`}
-    </div>
-    <div class="card-grid">
-      ${ev.type === "period" ? periodForecastHTML(res.period) : ""}
-      <div class="nudge-card">
-        <div class="section-title"><h3>操作</h3></div>
-        <div class="action-btns">
-          ${ev.type === "period" ? `<button class="btn-secondary btn-small" id="period-log" type="button">今天开始了</button>` : ""}
-          <button class="btn-secondary btn-small" id="edit-item" type="button">编辑</button>
-          ${ev.archived ? `<button class="btn-secondary btn-small" id="restore-item" type="button">取消归档</button>` : `<button class="btn-secondary btn-small" id="toggle-item" type="button">${ev.enabled ? "停用" : "启用"}</button>`}
-          <button class="btn-secondary btn-small" id="unack-item" type="button">撤销今日确认</button>
-          <button class="btn-danger btn-small" id="delete-item" type="button">删除</button>
+    <div class="detail-page">
+      <button class="btn-secondary btn-small detail-back" id="back-events" type="button">← 返回清单</button>
+      <article class="detail-hero ${esc(ev.type)} space-${space}">
+        <div class="detail-hero-top">
+          <div class="detail-identity">
+            <div class="eyebrow">${SPACE_META[space].label}${ev.subtype ? " · " + esc(ev.subtype) : ""}</div>
+            <h2>${esc(ev.name)}</h2>
+            <p class="detail-meta">${esc(metaBits.join(" · "))}</p>
+          </div>
+          <div class="detail-hero-focus">
+            ${countdownHeroHTML(ev, res.check, forecastDays)}
+          </div>
         </div>
-        <p class="form-hint" style="margin-top:10px">确认请在飞书卡片点「已收到」。待办确认后会归档。保存不会立刻推送。</p>
-      </div>
-      <div class="nudge-card">
-        <div class="section-title"><h3>推送记录</h3></div>
-        ${hist.length ? hist.map(timelineRow).join("") : `<div class="empty-state"><p>还没有推送记录</p></div>`}
+        <div class="detail-actions" role="toolbar" aria-label="事项操作">
+          ${ev.type === "period" ? `<button class="btn-action is-primary" id="period-log" type="button">今天开始了</button>` : ""}
+          <button class="btn-action" id="edit-item" type="button">编辑</button>
+          ${ev.archived
+            ? `<button class="btn-action" id="restore-item" type="button">取消归档</button>`
+            : `<button class="btn-action" id="toggle-item" type="button">${ev.enabled ? "停用" : "启用"}</button>`}
+          <button class="btn-action" id="unack-item" type="button">撤销确认</button>
+          <button class="btn-action is-danger" id="delete-item" type="button">删除</button>
+        </div>
+        <p class="detail-hint">确认请在飞书点「已收到」。待办确认后会归档；保存不会立刻推送。</p>
+      </article>
+      <div class="card-grid detail-below">
+        ${ev.type === "period" ? periodForecastHTML(res.period) : ""}
+        <div class="nudge-card span-2 detail-history">
+          <div class="section-title"><h3>推送记录</h3></div>
+          ${hist.length ? hist.map(timelineRow).join("") : `<div class="empty-state soft"><p>还没有推送记录</p></div>`}
+        </div>
       </div>
     </div>
   `;
