@@ -224,6 +224,23 @@ h1,h2,h3 { font-family: var(--font-d); font-weight: 600; letter-spacing: -.02em;
 .upcoming-name { font-weight: 650; min-width: 0; }
 .upcoming-type { color: var(--muted); font-weight: 600; font-size: .85em; }
 .upcoming-when { color: var(--muted); font-size: .82rem; flex-shrink: 0; }
+.comfort-strip {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .55rem .75rem;
+  margin: 0 0 1rem; padding: .85rem 1rem;
+  background: linear-gradient(165deg, var(--amber-soft) 0%, #fff 70%);
+  border: 1px solid rgba(201,132,74,.18); border-radius: 16px;
+}
+.btn-comfort {
+  border: 0; border-radius: 999px; padding: .45rem .95rem;
+  font: inherit; font-weight: 700; font-size: .88rem; cursor: pointer;
+  color: #fff; background: linear-gradient(135deg, var(--amber), #D4A06A);
+  box-shadow: 0 6px 14px rgba(201,132,74,.25);
+}
+.btn-comfort:hover { filter: brightness(1.03); }
+.comfort-line {
+  flex: 1 1 12rem; margin: 0; font-family: var(--font-d);
+  font-size: 1.02rem; line-height: 1.45; letter-spacing: -.01em; color: var(--ink);
+}
 .btn-ack { width: 100%; padding: .85rem 1rem; font-size: 1rem; }
 .today-list { margin-top: .2rem; }
 .progress-wrap { margin: 0 0 1rem; }

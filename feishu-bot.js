@@ -171,6 +171,7 @@ function matchQaIntent(text) {
   if (/(github|开源热门|热门仓库|今日开源)/i.test(t)) return { intent: 'github' };
   if (/(科技快讯|今日热点|今日新闻|快讯|今日精选)/.test(t)) return { intent: 'news' };
   if (/(今天事项|今日事项|今日提醒|有什么事|待办)/.test(t)) return { intent: 'today' };
+  if (/(哄哄她|哄哄|说句好听|安慰一下|说点好听|来句暖)/.test(t)) return { intent: 'comfort' };
   if (/(经期|生理期)/.test(t)) return { intent: 'period' };
   return null;
 }

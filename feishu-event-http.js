@@ -151,6 +151,7 @@ function helpText(brand) {
     '• 今天学什么 — 推送今日编程精读卡',
     '• GitHub / 科技快讯 — 推送对应精选卡',
     '• 经期要注意什么 — 结合周期问答',
+    '• 哄哄她 — 抽一句暖话（经期/生日会更贴境）',
     '• 绑定 — 记下推送群 chat_id',
     '• 帮助 — 再看一遍菜单',
     '',
@@ -173,6 +174,53 @@ async function periodContextNote() {
     );
   }
   return lines.join('；');
+}
+
+/** Context-aware 「哄哄她」 line for Feishu / API. */
+async function buildComfortText(offset = 0) {
+  const { pickComfort, formatComfortReply } = require('./lib/comfort');
+  const data = await loadData();
+  const n = nowParts();
+  const today = dateStr();
+  let picked = null;
+  let name = '';
+
+  for (const raw of migrateEvents(data.events)) {
+    if (!raw.enabled) continue;
+    const r = checkEvent(raw, n);
+    if (!r || !r.active) continue;
+    if (raw.type === 'period' && r.care) {
+      picked = pickComfort({
+        date: today,
+        offset,
+        context: 'period',
+        periodSweet: r.care.sweet
+      });
+      name = raw.name;
+      break;
+    }
+    if (raw.type === 'birthday' && r.days === 0) {
+      picked = pickComfort({ date: today, offset, context: 'birthday' });
+      name = raw.name;
+      break;
+    }
+  }
+
+  if (!picked) {
+    // birthday within 3 days counts as birthday tone
+    for (const raw of migrateEvents(data.events)) {
+      if (!raw.enabled || raw.type !== 'birthday') continue;
+      const r = checkEvent({ ...raw, enabled: true }, n);
+      if (r && r.active && r.days != null && r.days <= 3) {
+        picked = pickComfort({ date: today, offset, context: 'birthday' });
+        name = raw.name;
+        break;
+      }
+    }
+  }
+
+  if (!picked) picked = pickComfort({ date: today, offset, context: 'general' });
+  return formatComfortReply(picked, name);
 }
 
 async function buildChatContext() {
@@ -212,6 +260,10 @@ async function answerQa(intent, userText) {
     if (!pending.length) return { text: '今天没有待确认的事项，都搞定了。' };
     const lines = pending.map((p) => `• ${p.name}${p.message ? `：${p.message}` : ''}`);
     return { text: `今日待确认（${pending.length}）：\n${lines.join('\n')}\n\n回「收到」可一键确认。` };
+  }
+
+  if (intent === 'comfort') {
+    return { text: await buildComfortText() };
   }
 
   if (intent === 'period') {
@@ -365,5 +417,6 @@ module.exports = {
   rememberChatId,
   answerQa,
   buildChatContext,
+  buildComfortText,
   helpText
 };

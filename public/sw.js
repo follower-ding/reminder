@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nudge-4.1.27';
+const CACHE_NAME = 'nudge-4.1.28';
 const PRECACHE = ['/', '/index.html', '/app.js', '/styles.css', '/manifest.json'];
 
 self.addEventListener('install', (event) => {
