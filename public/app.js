@@ -1,4 +1,4 @@
-﻿/* Nudge v4.1.2 — Today polish + space list; ack/chat in Feishu */
+/* Nudge v4.1.2 — Today polish + space list; ack/chat in Feishu */
 const API = "/api";
 const BRAND = { name: "Nudge", tagline: "轻推一下，刚好想起" };
 const HINT_KEY = "nudge_hide_feishu_hint";
