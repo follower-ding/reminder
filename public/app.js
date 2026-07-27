@@ -1,4 +1,4 @@
-/* Nudge v4.1.2 — Today polish + space list; ack/chat in Feishu */
+﻿/* Nudge v4.1.2 — Today polish + space list; ack/chat in Feishu */
 const API = "/api";
 const BRAND = { name: "Nudge", tagline: "轻推一下，刚好想起" };
 const HINT_KEY = "nudge_hide_feishu_hint";
@@ -112,10 +112,27 @@ function openModal(html, center = true) {
 function scheduleMeta(ev) {
   const s = ev.schedule || {};
   const mode = { daily: "每天", weekly: "每周", monthly: "每月", yearly: "每年", cycle: "周期" }[s.mode] || "";
-  const bits = [SPACE_META[spaceOf(ev)]?.label, mode, s.time];
-  if (ev.subtype === "birthday" || ev.type === "birthday") bits.push(s.month && s.day ? `${s.month}/${s.day}` : "");
-  if (ev.subtype === "anniversary") bits.push(s.month && s.day ? `${s.month}/${s.day}` : "");
-  return bits.filter(Boolean).join(" · ");
+  const bits = [SPACE_META[spaceOf(ev)]?.label, mode, s.time].filter(Boolean);
+  if (s.mode === "yearly" && s.month && s.day) {
+    const cal = ev.calendar === "lunar" ? "农历" : "阳历";
+    const now = new Date();
+    let t = new Date(now.getFullYear(), s.month - 1, s.day);
+    if (t < now) t = new Date(now.getFullYear() + 1, s.month - 1, s.day);
+    const diff = Math.ceil((t - now) / 86400000);
+    const mn = ["一","二","三","四","五","六","七","八","九","十","十一","十二"][t.getMonth()];
+    bits.push(s.month + "/" + s.day + "(" + cal + ")");
+    bits.push("剩" + diff + "天，下次" + mn + "月" + t.getDate() + "日");
+    if ((ev.type === "birthday" || ev.subtype === "birthday") && ev.birth_year) {
+      bits.push((t.getFullYear() - ev.birth_year) + "岁");
+    }
+  }
+  if (s.mode === "monthly" && s.day) {
+    const now = new Date();
+    let t = new Date(now.getFullYear(), now.getMonth(), s.day);
+    if (t < now) t = new Date(now.getFullYear(), now.getMonth() + 1, s.day);
+    bits.push("剩" + Math.ceil((t - now) / 86400000) + "天");
+  }
+  return bits.join(" \u00B7 ");
 }
 
 async function login() {
@@ -415,21 +432,26 @@ async function renderEvents(el) {
 
 function eventCard(ev) {
   const space = spaceOf(ev);
-  return `<article class="nudge-card clickable space-${space} ${esc(ev.type)}" data-open="${ev.id}">
-    <div class="rail"></div>
-    <div class="card-top">
-      <div class="title">${esc(ev.name)}</div>
-      <div class="badge-row">${spaceBadge(space)}${ev.archived ? `<span class="badge">已归档</span>` : ev.enabled ? "" : `<span class="badge">停用</span>`}</div>
-    </div>
-    <div class="meta">${esc(scheduleMeta(ev))}</div>
-    <div class="card-foot">
-      <label class="check-wrap" onclick="event.stopPropagation()">
-        <input type="checkbox" class="sel-box" data-id="${ev.id}" ${selectedIds.has(ev.id) ? "checked" : ""}>
-        <span class="form-hint">选</span>
-      </label>
-      <span class="form-hint">详情 →</span>
-    </div>
-  </article>`;
+  let ageLabel = '';
+  if ((ev.type === "birthday" || ev.subtype === "birthday") && ev.birth_year) {
+    ageLabel = ' \u00B7 ' + (new Date().getFullYear() - ev.birth_year) + '\u5C81';
+  }
+  const calBadge = ev.calendar === 'lunar' ? '<span class="badge">\u519C\u5386</span>' : '';
+  return '<article class="nudge-card clickable space-' + space + ' ' + esc(ev.type) + '" data-open="' + ev.id + '">' +
+    '<div class="rail"></div>' +
+    '<div class="card-top">' +
+      '<div class="title">' + esc(ev.name) + ageLabel + '</div>' +
+      '<div class="badge-row">' + spaceBadge(space) + calBadge + (ev.archived ? '<span class="badge">\u5DF2\u5F52\u6863</span>' : ev.enabled ? '' : '<span class="badge">\u505C\u7528</span>') + '</div>' +
+    '</div>' +
+    '<div class="meta">' + esc(scheduleMeta(ev)) + '</div>' +
+    '<div class="card-foot">' +
+      '<label class="check-wrap" onclick="event.stopPropagation()">' +
+        '<input type="checkbox" class="sel-box" data-id="' + ev.id + '" ' + (selectedIds.has(ev.id) ? 'checked' : '') + '>' +
+        '<span class="form-hint">\u9009</span>' +
+      '</label>' +
+      '<span class="form-hint">\u8BE6\u60C5 \u2192</span>' +
+    '</div>' +
+  '</article>';
 }
 
 function periodPhaseLabel(f) {
