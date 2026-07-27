@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 const fs = require('fs');
@@ -31,6 +31,8 @@ const engine = require('./engine');
 const digest = require('./digest');
 const ledger = require('./ledger');
 const feishuBot = require('./feishu-bot');
+const { authMiddleware, createToken, verifyToken, TOKEN_SECRET } = require('./middleware/auth');
+const { errorHandler, asyncHandler } = require('./middleware/error');
 
 const PORT = process.env.PORT || 3333;
 const APP_URL = process.env.APP_URL || 'https://reminder-three-gamma.vercel.app';
@@ -93,38 +95,7 @@ function nextId(arr) {
   return arr.length ? Math.max(...arr.map(x => x.id)) + 1 : 1;
 }
 // 无状态签名 Token（Vercel 多实例/冷启动不丢登录态）
-const TOKEN_SECRET = process.env.TOKEN_SECRET || 'reminder-hmac-v1-change-me';
 const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-
-function b64url(buf) {
-  return Buffer.from(buf).toString('base64url');
-}
-function createToken(user) {
-  const payload = b64url(JSON.stringify({
-    u: user.username,
-    l: user.label || user.username,
-    exp: Date.now() + TOKEN_TTL_MS
-  }));
-  const sig = crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest('base64url');
-  return `${payload}.${sig}`;
-}
-function verifyToken(token) {
-  if (!token || typeof token !== 'string') return null;
-  const parts = token.split('.');
-  if (parts.length !== 2) return null;
-  const [payload, sig] = parts;
-  const expected = crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest('base64url');
-  const a = Buffer.from(sig);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
-  try {
-    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-    if (!data.exp || data.exp < Date.now() || !data.u) return null;
-    return { username: data.u, label: data.l || data.u };
-  } catch {
-    return null;
-  }
-}
 
 // ─── 推送 ────────────────────────────────────────────
 function resolveFeishuChatId(config) {
@@ -306,19 +277,6 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // 认证中间件（HMAC 签名 Token，跨进程/冷启动有效）
-function authMiddleware(req, res, next) {
-  const bypassExact = new Set(['/api/login', '/api/health', '/api/check', '/api/cron/check', '/api/feishu/event']);
-  if (bypassExact.has(req.path)) return next();
-  // Vercel / 代理下 path 可能变形
-  if (String(req.path || '').includes('feishu/event')) return next();
-  if (req.path.startsWith('/api/ack/')) return next();
-  if (!req.path.startsWith('/api/')) return next();
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, '');
-  const user = verifyToken(token);
-  if (user) { req.user = user; return next(); }
-  return res.status(401).json({ error: '未认证' });
-}
-app.use(authMiddleware);
 
 // ─── 认证 ────────────────────────────────────────────
 app.post('/api/login', async (req, res) => {
@@ -1233,6 +1191,9 @@ if (require.main === module && !process.env.VERCEL) {
       console.log(`   ⏰ 时区: ${cachedTimezone}`);
       console.log(`   📊 事件数: ${data.events.length}`);
       console.log(`   💾 存储: ${persist.backend}${persist.durable ? '' : ' (非持久)'}`);
+      if (TOKEN_SECRET === "reminder-hmac-v1-change-me") {
+        console.warn("   ⚠️ 警告: TOKEN_SECRET 使用默认值，请通过环境变量设置唯一密钥");
+      }
       console.log(`   ⏱️  本地调度: 每 60s 扫描到期事项（飞书需在设置中启用）`);
     } catch (e) {
       console.log(`✨ Nudge v4.0 已启动`);
@@ -1250,5 +1211,7 @@ if (require.main === module && !process.env.VERCEL) {
     }, 3000);
   });
 }
+
+app.use(errorHandler);
 
 module.exports = app;
