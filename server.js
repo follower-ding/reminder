@@ -71,8 +71,10 @@ const {
   unackEvent,
   buildAckUrl,
   buildAckValue,
-  verifyAckSig
+  verifyAckSig,
+  getPeriodCare
 } = engine;
+const { buildCycleTimeline } = require('./lib/period-care');
 
 let cachedTimezone = 'Asia/Shanghai';
 
@@ -575,7 +577,7 @@ app.get('/api/health', async (req, res) => {
     res.json({
       status: 'ok',
       time: dateStr(),
-      version: '4.1.24',
+      version: '4.1.26',
       brand: BRAND.name,
       app_url: APP_URL,
       deepseek: { configured: !!process.env.DEEPSEEK_API_KEY },
@@ -975,9 +977,23 @@ app.get('/api/events/:id/detail', async (req, res) => {
     const history = ledger.listByItem(data.push_ledger, id);
     let period = null;
     if (ev.type === 'period') {
+      const forecast = predictPeriod(ev.schedule || {}, n);
+      let care = null;
+      if (forecast?.in_period) {
+        care = getPeriodCare(forecast.day_in_cycle, {
+          periodLength: forecast.period_length,
+          phase: 'period'
+        });
+      } else if (forecast?.in_ovulation) {
+        care = getPeriodCare(forecast.day_in_cycle, { phase: 'ovulation' });
+      } else if (forecast && forecast.days_to_next > 0 && forecast.days_to_next <= (ev.schedule?.remind_ahead_cycle || 3)) {
+        care = getPeriodCare(forecast.day_in_cycle, { phase: 'pre' });
+      }
       period = {
-        forecast: predictPeriod(ev.schedule || {}, n),
-        history: periodHistoryRows(ev.schedule || {})
+        forecast,
+        history: periodHistoryRows(ev.schedule || {}),
+        care,
+        timeline: forecast ? buildCycleTimeline(forecast) : null
       };
     }
     res.json({ item: ev, check, push_history: history, period, brand: BRAND });

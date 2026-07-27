@@ -3,6 +3,11 @@
  */
 const crypto = require('crypto');
 const { lunarToSolar, solarToLunar } = require('./lib/lunar');
+const {
+  getPeriodCare,
+  formatCarePushMessage,
+  formatCareFeishuBlock
+} = require('./lib/period-care');
 
 const TYPE_META = {
   birthday: { label: '生日', icon: '🎂', modes: ['yearly'], headerColor: 'orange' },
@@ -374,7 +379,8 @@ function checkEvent(ev, n) {
     const mday = sched.day || 1;
     let targetDay;
     if (e.calendar === 'lunar' && mode === 'yearly' && month >= 1 && month <= 12) {
-      const ld = lunarToSolar(month, mday, n.year);
+      const leap = !!sched.leap_month;
+      const ld = lunarToSolar(month, mday, n.year, leap);
       targetDay = ld || new Date(n.year, month - 1, mday);
     } else {
       targetDay = new Date(n.year, month - 1, mday);
@@ -382,7 +388,7 @@ function checkEvent(ev, n) {
     let diff = Math.floor((targetDay - new Date(n.year, n.month - 1, n.day)) / 86400000);
     if (mode === 'yearly' && diff < 0) {
       if (e.calendar === 'lunar') {
-        const nextLunar = lunarToSolar(month, mday, n.year + 1);
+        const nextLunar = lunarToSolar(month, mday, n.year + 1, !!sched.leap_month);
         targetDay = nextLunar || new Date(n.year + 1, month - 1, mday);
       } else {
         targetDay.setFullYear(n.year + 1);
@@ -414,28 +420,35 @@ function checkEvent(ev, n) {
     if (!pred) return null;
     if (pred.in_period) {
       const key = `day_${pred.day_in_cycle}`;
+      const care = getPeriodCare(pred.day_in_cycle, {
+        periodLength: pred.period_length,
+        phase: 'period'
+      });
       return {
         active: true,
-        message: msg[key] || `🩸 经期第 ${pred.day_in_cycle} 天`,
+        message: msg[key] || formatCarePushMessage(care, e.name),
         urgent: true,
         days: 0,
         cycleDay: pred.day_in_cycle,
         name: e.name,
         type: 'period',
         prediction: pred,
+        care,
         time: sched.time || null
       };
     }
     if (pred.in_ovulation) {
+      const care = getPeriodCare(pred.day_in_cycle, { phase: 'ovulation' });
       return {
         active: true,
-        message: msg.ovulation || '🥚 排卵期，注意休息与观察',
+        message: msg.ovulation || formatCarePushMessage(care, e.name),
         urgent: false,
         days: 0,
         cycleDay: pred.day_in_cycle,
         name: e.name,
         type: 'period',
         prediction: pred,
+        care,
         time: sched.time || null
       };
     }
@@ -454,15 +467,17 @@ function checkEvent(ev, n) {
     }
     const preDays = sched.remind_ahead_cycle || 3;
     if (pred.days_to_next > 0 && pred.days_to_next <= preDays) {
+      const care = getPeriodCare(pred.day_in_cycle, { phase: 'pre' });
       return {
         active: true,
-        message: msg.pre || `🩸 经期预计还有 ${pred.days_to_next} 天（约 ${pred.next_start}）`,
+        message: msg.pre || formatCarePushMessage(care, e.name),
         urgent: false,
         days: pred.days_to_next,
         cycleDay: pred.day_in_cycle,
         name: e.name,
         type: 'period',
         prediction: pred,
+        care,
         time: sched.time || null
       };
     }
@@ -546,6 +561,9 @@ function isRichDigestFormat(fmt) {
 }
 
 function formatItemLine(x) {
+  if (x.type === 'period' && x.care) {
+    return formatCareFeishuBlock(x.care);
+  }
   const msg = x.message || x.name || '事项';
   if (isRichDigestFormat(x.format)) return msg;
   // 确认走卡片按钮回调，正文不再放跳转链接
@@ -592,9 +610,13 @@ function buildFeishuCard(dateLabel, items, title, appUrl, brandName, options = {
       sections.push(list.map((i) => i.message || '').join('\n\n'));
       return;
     }
+    if (key === 'period' && list.some((i) => i.care)) {
+      sections.push(`**${heading}**\n${list.map(formatItemLine).join('\n\n')}`);
+      return;
+    }
     sections.push(`**${heading}**\n${list.map(formatItemLine).join('\n')}`);
   };
-  pushSection('period', '经期与周期');
+  pushSection('period', '经期关怀');
   pushSection('birthday', '生日');
   pushSection('custom', '今日事项');
   pushSection('digest', '每日热点');
@@ -703,7 +725,12 @@ function buildFeishuCard(dateLabel, items, title, appUrl, brandName, options = {
 function buildServerchanBody(dateLabel, items) {
   const lines = [`### ${dateLabel} 日常提醒`, ''];
   for (const i of items || []) {
-    lines.push(`- ${i.message}`);
+    if (i.type === 'period' && i.care) {
+      lines.push(formatCareFeishuBlock(i.care).replace(/\*\*/g, '').replace(/_/g, ''));
+      lines.push('');
+    } else {
+      lines.push(`- ${i.message}`);
+    }
   }
   lines.push('', '---', '来自「日常提醒」');
   return lines.join('\n');
@@ -749,7 +776,8 @@ function normalizeEventInput(body) {
   }
   const birthDateRaw = raw.birth_date || raw.birth_solar;
   if (space === 'moment' && subtype === 'birthday' && birthDateRaw) {
-    const m = String(birthDateRaw).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const normalized = String(birthDateRaw).trim().replace(/[/.]/g, '-');
+    const m = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
     if (m) {
       const y = +m[1];
       const mo = +m[2];
@@ -758,15 +786,17 @@ function normalizeEventInput(body) {
       if (lun) {
         calendar = 'lunar';
         birthYear = y;
-        birthSolar = m[0];
+        birthSolar = `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
         schedule.month = lun.month;
         schedule.day = lun.day;
+        schedule.leap_month = !!lun.leap;
         schedule.mode = 'yearly';
       }
     }
   } else if (raw.birth_solar && /^\d{4}-\d{2}-\d{2}$/.test(String(raw.birth_solar))) {
     birthSolar = String(raw.birth_solar);
   }
+  if (schedule.leap_month != null) schedule.leap_month = !!schedule.leap_month;
 
   const draft = {
     space,
@@ -812,5 +842,8 @@ module.exports = {
   verifyAckSig,
   buildAckUrl,
   buildAckValue,
-  buildAckedCard
+  buildAckedCard,
+  getPeriodCare,
+  formatCarePushMessage,
+  formatCareFeishuBlock
 };

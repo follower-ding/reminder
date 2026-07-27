@@ -130,6 +130,12 @@ const LUNAR_MONTH_NAME = ["", "正月", "二月", "三月", "四月", "五月", 
 const LUNAR_DAY_DIGIT = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"];
 let _lunFmt = null;
 function _lunF() { if (!_lunFmt) _lunFmt = new Intl.DateTimeFormat("zh-CN-u-ca-chinese",{year:"numeric",month:"numeric",day:"numeric"}); return _lunFmt; }
+function parseLunarMonthLabel(raw) {
+  const s = String(raw || "").replace(/月$/, "");
+  const leap = s.startsWith("闰");
+  const key = leap ? s.slice(1) : s;
+  return { month: LUNAR_CN[key] || 0, leap };
+}
 function lunarDayName(day) {
   const n = Number(day) || 0;
   if (n <= 0) return String(day || "");
@@ -140,24 +146,48 @@ function lunarDayName(day) {
   if (n === 30) return "三十";
   return String(n);
 }
-function formatLunarMD(mon, day) {
-  return LUNAR_MONTH_NAME[mon] + lunarDayName(day);
+function formatLunarMD(mon, day, leap) {
+  const base = LUNAR_MONTH_NAME[mon] || (mon + "月");
+  return (leap ? "闰" + base : base) + lunarDayName(day);
 }
-function lunarToSolar(mon,day,year) {
-  const s=new Date(year,0,1,12,0,0,0),e=new Date(year+1,0,20,12,0,0,0),f=_lunF(),d=new Date(s);
-  while(d<=e){const p=f.formatToParts(d);let lm=0,ld=0;for(const x of p){if(x.type==="month")lm=LUNAR_CN[x.value.replace(/月$/,"")]||0;if(x.type==="day")ld=parseInt(x.value,10)}if(lm===mon&&ld===day)return new Date(d.getFullYear(),d.getMonth(),d.getDate(),12,0,0,0);d.setDate(d.getDate()+1)}return null
+function lunarToSolar(mon, day, year, leap) {
+  const wantLeap = !!leap;
+  const s = new Date(year, 0, 1, 12, 0, 0, 0);
+  const e = new Date(year + 1, 0, 20, 12, 0, 0, 0);
+  const f = _lunF();
+  const d = new Date(s);
+  let fallback = null;
+  while (d <= e) {
+    const p = f.formatToParts(d);
+    let monthLabel = "";
+    let ld = 0;
+    for (const x of p) {
+      if (x.type === "month") monthLabel = x.value;
+      if (x.type === "day") ld = parseInt(x.value, 10) || 0;
+    }
+    const parsed = parseLunarMonthLabel(monthLabel);
+    if (parsed.month === mon && ld === day) {
+      const hit = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0, 0);
+      if (parsed.leap === wantLeap) return hit;
+      if (!parsed.leap && !fallback) fallback = hit;
+    }
+    d.setDate(d.getDate() + 1);
+  }
+  return wantLeap ? fallback : null;
 }
 function solarToLunar(date) {
   const raw = date instanceof Date ? date : new Date(date);
   const d = new Date(raw.getFullYear(), raw.getMonth(), raw.getDate(), 12, 0, 0, 0);
   const parts = _lunF().formatToParts(d);
-  let mon = 0, day = 0;
+  let monthLabel = "";
+  let day = 0;
   for (const p of parts) {
-    if (p.type === "month") mon = LUNAR_CN[p.value.replace(/月$/, "")] || 0;
+    if (p.type === "month") monthLabel = p.value;
     if (p.type === "day") day = parseInt(p.value, 10) || 0;
   }
-  if (!mon || !day) return null;
-  return { month: mon, day, label: formatLunarMD(mon, day) };
+  const parsed = parseLunarMonthLabel(monthLabel);
+  if (!parsed.month || !day) return null;
+  return { month: parsed.month, day, leap: parsed.leap, label: formatLunarMD(parsed.month, day, parsed.leap) };
 }
 function formatSolarMD(date) {
   const d = date instanceof Date ? date : new Date(date);
@@ -173,7 +203,7 @@ function birthdayBirthDateValue(ev) {
   if (ev?.birth_solar && /^\d{4}-\d{2}-\d{2}$/.test(ev.birth_solar)) return ev.birth_solar;
   const s = ev?.schedule || {};
   if (ev?.calendar === "lunar" && ev.birth_year && s.month && s.day) {
-    const solar = lunarToSolar(s.month, s.day, ev.birth_year);
+    const solar = lunarToSolar(s.month, s.day, ev.birth_year, !!s.leap_month);
     if (solar) return toYMD(solar);
   }
   if (ev?.birth_year && s.month && s.day) {
@@ -183,17 +213,21 @@ function birthdayBirthDateValue(ev) {
 }
 /** From solar YMD → lunar birthday payload fields. */
 function birthdayFromSolarYmd(ymd) {
-  const m = String(ymd || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const normalized = String(ymd || "").trim().replace(/[/.]/g, "-");
+  const m = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
   if (!m) return null;
   const y = +m[1], mo = +m[2], d = +m[3];
+  if (!y || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
   const lun = solarToLunar(new Date(y, mo - 1, d, 12));
   if (!lun) return null;
+  const birth_solar = y + "-" + pad2(mo) + "-" + pad2(d);
   return {
-    birth_solar: m[0],
+    birth_solar,
     birth_year: y,
     calendar: "lunar",
     lunar_month: lun.month,
     lunar_day: lun.day,
+    lunar_leap: !!lun.leap,
     lunar_label: lun.label
   };
 }
@@ -291,10 +325,11 @@ function nextOccurrence(ev, forecastDays) {
   let cycle = 365;
   if (s.mode === "yearly" && s.month && s.day) {
     if (isLunar) {
-      t = lunarToSolar(s.month, s.day, curY);
+      const leap = !!s.leap_month;
+      t = lunarToSolar(s.month, s.day, curY, leap);
       if (!t) t = new Date(curY, s.month - 1, s.day);
       if (t < now) {
-        const t2 = lunarToSolar(s.month, s.day, curY + 1);
+        const t2 = lunarToSolar(s.month, s.day, curY + 1, leap);
         t = t2 || new Date(curY + 1, s.month - 1, s.day);
       }
     } else {
@@ -329,7 +364,7 @@ function nextOccurrence(ev, forecastDays) {
   let lunarText = "";
   if (s.mode === "yearly" && s.month && s.day) {
     if (isLunar) {
-      lunarText = formatLunarMD(s.month, s.day);
+      lunarText = formatLunarMD(s.month, s.day, !!s.leap_month);
       anchorLabel = "农历" + lunarText;
       pairLabel = "阳历" + solarText;
     } else {
@@ -350,16 +385,23 @@ function nextOccurrence(ev, forecastDays) {
   };
 }
 
-function countdownHeroHTML(ev, check, forecastDays) {
+function countdownHeroHTML(ev, check, forecastDays, forecast) {
   const next = nextOccurrence(ev, forecastDays);
-  const urgent = next && next.days <= 3;
-  const today = next && next.days === 0;
+  const inPeriod = ev.type === "period" && forecast?.in_period;
+  const periodLen = forecast?.period_length || 5;
+  const urgent = inPeriod || (next && next.days <= 3);
+  const today = inPeriod || (next && next.days === 0);
   const r = 54;
   const c = 2 * Math.PI * r;
-  const progress = next ? next.progress : 0;
+  let progress = next ? next.progress : 0;
+  let daysText = !next ? "—" : today && !inPeriod ? "今" : String(next.days);
+  let unit = !next ? "" : "天";
+  if (inPeriod) {
+    daysText = String(forecast.day_in_cycle);
+    unit = `/${periodLen}`;
+    progress = Math.min(1, (forecast.day_in_cycle || 1) / periodLen);
+  }
   const dash = (progress * c).toFixed(1);
-  const daysText = !next ? "—" : today ? "今" : String(next.days);
-  const unit = !next ? "" : "天";
   const status = check
     ? `<p class="detail-status is-active">${esc(check.message)}</p>`
     : `<p class="detail-status">当前未到触发条件</p>`;
@@ -367,6 +409,8 @@ function countdownHeroHTML(ev, check, forecastDays) {
   const isBday = ev.type === "birthday" || ev.subtype === "birthday";
   const fun = birthdayFunFacts(ev, next);
   const chips = [];
+  if (ev.type === "period") chips.push(`<span class="detail-chip with-icon">${iconSvg("heart")}经期</span>`);
+  if (inPeriod) chips.push(`<span class="detail-chip">第 ${forecast.day_in_cycle} 天</span>`);
   if (isBday) chips.push(`<span class="detail-chip with-icon">${iconSvg("cake")}生日</span>`);
   if (next?.age != null) chips.push(`<span class="detail-chip">${next.age}岁</span>`);
   if (fun) {
@@ -376,8 +420,11 @@ function countdownHeroHTML(ev, check, forecastDays) {
   if (next?.isLunar) chips.push(`<span class="detail-chip with-icon">${iconSvg("moon")}农历</span>`);
   else if (ev.schedule?.mode === "yearly") chips.push(`<span class="detail-chip with-icon">${iconSvg("sun")}阳历</span>`);
 
-  let dateBlock = `<p class="detail-next">${!next ? "暂无下次日期" : today ? "就是今天" : "下次 " + next.nextLabel}</p>`;
-  if (next && ev.schedule?.mode === "yearly" && (next.solarText || next.lunarText)) {
+  let dateBlock = `<p class="detail-next">${!next ? "暂无下次日期" : today && !inPeriod ? "就是今天" : "下次 " + next.nextLabel}</p>`;
+  if (inPeriod) {
+    dateBlock = `<p class="detail-next">经期中 · 第 ${esc(String(forecast.day_in_cycle))} / ${esc(String(periodLen))} 天</p>
+      <p class="detail-next-note">这几天会每天推送关怀内容</p>`;
+  } else if (next && ev.schedule?.mode === "yearly" && (next.solarText || next.lunarText)) {
     const wd = ["日","一","二","三","四","五","六"][next.date.getDay()];
     if (next.isLunar) {
       let birthSolarRow = "";
@@ -433,7 +480,8 @@ function countdownHeroHTML(ev, check, forecastDays) {
           <span class="cal-v">${esc(next.lunarText || "—")} · ${esc(String(next.date.getFullYear()))}</span>
         </div>
       </div>
-      <p class="detail-next-note">当前按阳历每年同日提醒。编辑时填写出生阳历日期，会自动改为按农历过（推荐）</p>`;
+      <p class="detail-next-note">当前按阳历每年同日提醒。可一键改为按农历过（推荐）</p>
+      <button class="btn-action is-primary btn-migrate-lunar" id="migrate-lunar" type="button">改为按农历过</button>`;
     }
   }
 
@@ -469,9 +517,9 @@ function yearCalendarRows(ev, years = 8) {
     let solar;
     let lunarLabel;
     if (isLunar) {
-      solar = lunarToSolar(s.month, s.day, y);
+      solar = lunarToSolar(s.month, s.day, y, !!s.leap_month);
       if (!solar) continue;
-      lunarLabel = formatLunarMD(s.month, s.day);
+      lunarLabel = formatLunarMD(s.month, s.day, !!s.leap_month);
     } else {
       solar = new Date(y, s.month - 1, s.day);
       const lun = solarToLunar(solar);
@@ -602,7 +650,7 @@ function birthdayFunFacts(ev, next) {
   if (!isBday || !next?.date) return null;
   let westDate = next.date;
   if (ev.birth_year && ev.calendar === "lunar" && ev.schedule?.month && ev.schedule?.day) {
-    const bornSolar = lunarToSolar(ev.schedule.month, ev.schedule.day, ev.birth_year);
+    const bornSolar = lunarToSolar(ev.schedule.month, ev.schedule.day, ev.birth_year, !!ev.schedule.leap_month);
     if (bornSolar) westDate = bornSolar;
   } else if (ev.birth_year && ev.calendar !== "lunar" && ev.schedule?.month && ev.schedule?.day) {
     westDate = new Date(ev.birth_year, ev.schedule.month - 1, ev.schedule.day);
@@ -680,7 +728,7 @@ function yearCalendarChartHTML(ev) {
   if (!rows.length) return "";
 
   if (lunarMode) {
-    const lunarName = formatLunarMD(s.month, s.day);
+    const lunarName = formatLunarMD(s.month, s.day, !!s.leap_month);
     const tableRows = rows.map((r, i) => `
       <tr class="${r.isNext ? "is-next" : ""} ${r.past ? "is-past" : ""}" style="--row:${i}">
         <td>${r.year}${r.isNext ? '<span class="tag-next">下次</span>' : ""}</td>
@@ -1035,10 +1083,11 @@ function eventCard(ev) {
     const curY = now.getFullYear();
     let next;
     if (ev.calendar === "lunar" && s.month && s.day) {
-      next = lunarToSolar(s.month, s.day, curY);
+      const leap = !!s.leap_month;
+      next = lunarToSolar(s.month, s.day, curY, leap);
       if (!next) next = new Date(curY, (s.month || 1) - 1, s.day || 1);
       if (next < now) {
-        const t2 = lunarToSolar(s.month, s.day, curY + 1);
+        const t2 = lunarToSolar(s.month, s.day, curY + 1, leap);
         next = t2 || new Date(curY + 1, (s.month || 1) - 1, s.day || 1);
       }
     } else if (s.month && s.day) {
@@ -1084,12 +1133,66 @@ function periodConfidenceLabel(level) {
   return ({ high: "较高", medium: "中等", low: "偏低" })[level] || "偏低";
 }
 
+function cycleTimelineHTML(timeline) {
+  if (!timeline?.phases?.length) return "";
+  const segs = timeline.phases.map((p) => `
+    <div class="cycle-seg ${p.id === timeline.active ? "is-active" : ""}" style="flex:${Math.max(p.width, 6)}" title="${esc(p.label)} ${p.start}-${p.end}天">
+      <span>${esc(p.label)}</span>
+    </div>`).join("");
+  const pct = Math.round((timeline.position || 0) * 100);
+  return `
+    <div class="nudge-card span-2 cycle-timeline-card">
+      <div class="section-title">
+        <h3>周期时间轴</h3>
+        <span class="form-hint">第 ${esc(String(timeline.day_in_cycle))} / ${esc(String(timeline.cycle_length))} 天</span>
+      </div>
+      <div class="cycle-track" role="img" aria-label="周期阶段">
+        ${segs}
+        <i class="cycle-pin" style="left:${pct}%" aria-hidden="true"></i>
+      </div>
+      <p class="form-hint cycle-legend">月经 · 卵泡 · 排卵 · 黄体 · 仅供参考</p>
+    </div>`;
+}
+
+function periodCareHTML(care) {
+  if (!care) return "";
+  const list = (arr, cls) => (arr || []).map((x) => `<li class="${cls}">${esc(x)}</li>`).join("");
+  return `
+    <div class="nudge-card span-2 period-care-card">
+      <div class="section-title">
+        <h3>今日关怀</h3>
+        ${care.day ? `<span class="badge">Day ${esc(String(care.day))}</span>` : `<span class="badge">${esc(care.phase || "")}</span>`}
+      </div>
+      <p class="care-sweet">${esc(care.sweet || "")}</p>
+      <p class="care-title">${esc(care.title || "")}</p>
+      <div class="care-grid">
+        <div class="care-col">
+          <h4>注意事项</h4>
+          <ul>${list(care.notes, "")}</ul>
+        </div>
+        <div class="care-col">
+          <h4>少碰</h4>
+          <ul>${list(care.avoid, "is-avoid")}</ul>
+        </div>
+        <div class="care-col">
+          <h4>可以做</h4>
+          <ul>${list(care.do, "is-do")}</ul>
+        </div>
+      </div>
+      <p class="form-hint care-disclaimer">${esc(care.disclaimer || "")}</p>
+    </div>`;
+}
+
 function periodForecastHTML(period) {
   if (!period) return "";
   const f = period.forecast;
   const hist = period.history || [];
+  const careBlock = periodCareHTML(period.care);
+  const timelineBlock = cycleTimelineHTML(period.timeline);
   if (!f) {
     return `
+      ${timelineBlock}
+      ${careBlock}
       <div class="nudge-card span-2 period-forecast">
         <div class="section-title"><h3>预测</h3></div>
         <p class="form-hint">还没有经期开始记录。点「今天开始了」记一次后，即可预测下次日期。</p>
@@ -1105,6 +1208,8 @@ function periodForecastHTML(period) {
         </div>`).join("")
     : `<p class="form-hint">暂无历史。每次点「今天开始了」会记一笔。</p>`;
   return `
+    ${timelineBlock}
+    ${careBlock}
     <div class="nudge-card span-2 period-forecast">
       <div class="section-title">
         <h3>预测</h3>
@@ -1143,6 +1248,8 @@ async function renderDetail(el, id) {
   const hist = res.push_history || [];
   const space = spaceOf(ev);
   const forecastDays = res.period?.forecast?.days_to_next;
+  const forecast = res.period?.forecast;
+  const inPeriod = ev.type === "period" && forecast?.in_period;
   const metaBits = [
     SPACE_META[space].label,
     ({ daily: "每天", weekly: "每周", monthly: "每月", yearly: "每年", cycle: "周期" })[ev.schedule?.mode] || "",
@@ -1153,7 +1260,7 @@ async function renderDetail(el, id) {
   el.innerHTML = `
     <div class="detail-page">
       <button class="btn-secondary btn-small detail-back" id="back-events" type="button">← 返回清单</button>
-      <article class="detail-hero ${esc(ev.type)} space-${space}">
+      <article class="detail-hero ${esc(ev.type)} space-${space}${inPeriod ? " is-in-period" : ""}">
         <div class="hero-sparkles" aria-hidden="true"></div>
         <div class="detail-hero-top">
           <div class="detail-identity">
@@ -1162,19 +1269,22 @@ async function renderDetail(el, id) {
             <p class="detail-meta">${esc(metaBits.join(" · "))}</p>
           </div>
           <div class="detail-hero-focus">
-            ${countdownHeroHTML(ev, res.check, forecastDays)}
+            ${countdownHeroHTML(ev, res.check, forecastDays, forecast)}
           </div>
         </div>
         <div class="detail-actions" role="toolbar" aria-label="事项操作">
-          ${ev.type === "period" ? `<button class="btn-action is-primary" id="period-log" type="button">今天开始了</button>` : ""}
+          ${ev.type === "period" ? `<button class="btn-action is-primary" id="period-log" type="button">${inPeriod ? "再记一次开始" : "今天开始了"}</button>` : ""}
           <button class="btn-action" id="edit-item" type="button">编辑</button>
-          ${ev.archived
-            ? `<button class="btn-action" id="restore-item" type="button">取消归档</button>`
-            : `<button class="btn-action" id="toggle-item" type="button">${ev.enabled ? "停用" : "启用"}</button>`}
-          <button class="btn-action" id="unack-item" type="button">撤销确认</button>
-          <button class="btn-action is-danger" id="delete-item" type="button">删除</button>
+          <button class="btn-action btn-more-toggle" id="more-actions" type="button" aria-expanded="false">更多</button>
+          <div class="detail-actions-more hidden" id="detail-more">
+            ${ev.archived
+              ? `<button class="btn-action" id="restore-item" type="button">取消归档</button>`
+              : `<button class="btn-action" id="toggle-item" type="button">${ev.enabled ? "停用" : "启用"}</button>`}
+            <button class="btn-action" id="unack-item" type="button">撤销确认</button>
+            <button class="btn-action is-danger" id="delete-item" type="button">删除</button>
+          </div>
         </div>
-        <p class="detail-hint">确认请在飞书点「已收到」。待办确认后会归档；保存不会立刻推送。</p>
+        <p class="detail-hint">${ev.type === "period" ? "确认请在飞书点「已收到」。经期中每天会推送关怀内容；保存不会立刻推送。" : "确认请在飞书点「已收到」。待办确认后会归档；保存不会立刻推送。"}</p>
       </article>
       <div class="card-grid detail-below">
         ${funFactsHTML(ev, forecastDays)}
@@ -1182,13 +1292,56 @@ async function renderDetail(el, id) {
         ${yearCalendarChartHTML(ev)}
         <div class="nudge-card span-2 detail-history">
           <div class="section-title"><h3>推送记录</h3></div>
-          ${hist.length ? hist.map(timelineRow).join("") : `<div class="empty-state soft"><p>还没有推送记录</p></div>`}
+          ${hist.length ? hist.map(timelineRow).join("") : `<div class="empty-state soft"><p>${ev.type === "period" ? "还没有推送记录。经期开始后，关怀推送会出现在这里。" : "还没有推送记录"}</p></div>`}
         </div>
       </div>
     </div>
   `;
   document.getElementById("back-events").onclick = () => renderView("events");
   document.getElementById("edit-item").onclick = () => showEventForm(ev.id);
+  const moreBtn = document.getElementById("more-actions");
+  const morePanel = document.getElementById("detail-more");
+  if (moreBtn && morePanel) {
+    moreBtn.onclick = () => {
+      morePanel.classList.toggle("hidden");
+      const open = !morePanel.classList.contains("hidden");
+      moreBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    };
+  }
+  const migrateBtn = document.getElementById("migrate-lunar");
+  if (migrateBtn) {
+    migrateBtn.onclick = async () => {
+      const ymd = birthdayBirthDateValue(ev)
+        || (ev.birth_year && ev.schedule?.month && ev.schedule?.day
+          ? `${ev.birth_year}-${pad2(ev.schedule.month)}-${pad2(ev.schedule.day)}`
+          : "");
+      const parsed = birthdayFromSolarYmd(ymd);
+      if (!parsed) {
+        toast("无法换算，请编辑后填写出生日期");
+        return;
+      }
+      const body = {
+        ...ev,
+        calendar: "lunar",
+        birth_year: parsed.birth_year,
+        birth_solar: parsed.birth_solar,
+        schedule: {
+          ...(ev.schedule || {}),
+          mode: "yearly",
+          month: parsed.lunar_month,
+          day: parsed.lunar_day,
+          leap_month: !!parsed.lunar_leap
+        }
+      };
+      const r = await api("/events/" + ev.id, { method: "PUT", body: JSON.stringify(body) });
+      if (r.error) {
+        toast(r.error);
+        return;
+      }
+      toast(`已改为农历 ${parsed.lunar_label}`);
+      openDetail(ev.id);
+    };
+  }
   const toggleBtn = document.getElementById("toggle-item");
   if (toggleBtn) {
     toggleBtn.onclick = async () => {
@@ -1666,11 +1819,11 @@ function setupEventForm(modal, ev, spaceHint) {
       return;
     }
     const curY = new Date().getFullYear();
-    let nextSolar = lunarToSolar(parsed.lunar_month, parsed.lunar_day, curY);
+    let nextSolar = lunarToSolar(parsed.lunar_month, parsed.lunar_day, curY, parsed.lunar_leap);
     if (nextSolar) {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      if (nextSolar < today) nextSolar = lunarToSolar(parsed.lunar_month, parsed.lunar_day, curY + 1);
+      if (nextSolar < today) nextSolar = lunarToSolar(parsed.lunar_month, parsed.lunar_day, curY + 1, parsed.lunar_leap);
     }
     const nextBit = nextSolar
       ? `下次阳历 <strong>${esc(formatSolarMD(nextSolar))}（${nextSolar.getFullYear()}）</strong>`
@@ -1703,6 +1856,7 @@ function setupEventForm(modal, ev, spaceHint) {
           mode: "yearly",
           month: parsed.lunar_month,
           day: parsed.lunar_day,
+          leap_month: !!parsed.lunar_leap,
           time: fd.get("time") || "09:00"
         },
         messages: {}
