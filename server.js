@@ -98,7 +98,6 @@ function nextId(arr) {
   return arr.length ? Math.max(...arr.map(x => x.id)) + 1 : 1;
 }
 // 无状态签名 Token（Vercel 多实例/冷启动不丢登录态）
-const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 // ─── 推送 ────────────────────────────────────────────
 

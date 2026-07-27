@@ -15,3 +15,5 @@ android/local.properties
 *.apk
 *.aab
 .idea/
+
+tmp_*.js
