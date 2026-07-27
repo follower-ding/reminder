@@ -214,6 +214,28 @@ h1,h2,h3 { font-family: var(--font-d); font-weight: 600; letter-spacing: -.02em;
   font-weight: 650; letter-spacing: -.03em; color: #9A6233; line-height: 1.1;
 }
 .streak-card .streak-meta { color: var(--muted); font-size: .85rem; margin-top: .35rem; }
+.capsule-card {
+  background: linear-gradient(165deg, rgba(231,239,236,.9) 0%, #fff 55%);
+}
+.capsule-prev {
+  font-family: var(--font-d); font-size: 1.1rem; line-height: 1.5;
+  margin: .2rem 0 1rem; letter-spacing: -.01em;
+}
+.capsule-label {
+  display: block; font-size: .72rem; font-weight: 700; color: var(--teal-deep);
+  letter-spacing: .04em; margin-bottom: .35rem; font-family: var(--font-b);
+}
+.capsule-input {
+  width: 100%; margin: .35rem 0 .65rem; padding: .75rem .85rem;
+  border: 1px solid var(--line); border-radius: 14px; font: inherit; resize: vertical;
+  background: #fff;
+}
+.capsule-hist { margin-top: 1rem; display: grid; gap: .45rem; }
+.capsule-hist-row {
+  display: grid; grid-template-columns: 3.2rem 1fr; gap: .55rem;
+  padding: .45rem 0; border-top: 1px solid var(--line); font-size: .9rem;
+}
+.capsule-year { font-weight: 700; color: var(--muted); }
 .action-card.has-care {
   background: linear-gradient(165deg, var(--amber-soft) 0%, #fff 55%);
   border-color: rgba(201,132,74,.2);

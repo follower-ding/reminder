@@ -1343,6 +1343,27 @@ function streakCardHTML(streak) {
     </div>`;
 }
 
+function capsuleCardHTML(capsule) {
+  if (!capsule?.eligible) return "";
+  const prev = capsule.previous;
+  const cur = capsule.this_year;
+  const hist = (capsule.list || []).slice(0, 5).map((c) => `
+    <div class="capsule-hist-row">
+      <span class="capsule-year">${esc(String(c.year))}</span>
+      <span>${esc(c.note)}</span>
+    </div>`).join("") || `<p class="form-hint">还没有往年留言</p>`;
+  return `
+    <div class="nudge-card span-2 capsule-card">
+      <div class="section-title"><h3>时间胶囊</h3></div>
+      ${prev ? `<p class="capsule-prev"><span class="capsule-label">${esc(String(prev.year))} 年的话</span>${esc(prev.note)}</p>`
+        : `<p class="form-hint">去年没有留言。今天写一句，明年会再遇见。</p>`}
+      <label class="form-hint" for="capsule-note">${cur ? "更新今年的话" : "写给明年的自己 / 她"}</label>
+      <textarea id="capsule-note" class="capsule-input" rows="3" maxlength="500" placeholder="一句想被记住的话…">${cur ? esc(cur.note) : ""}</textarea>
+      <button type="button" class="btn-action is-primary" id="capsule-save">封存今年</button>
+      <div class="capsule-hist">${hist}</div>
+    </div>`;
+}
+
 async function renderDetail(el, id) {
   el.innerHTML = `<div class="empty-state"><p>加载中…</p></div>`;
   const res = await api("/events/" + id + "/detail");
@@ -1392,6 +1413,7 @@ async function renderDetail(el, id) {
       <div class="card-grid detail-below">
         ${funFactsHTML(ev, forecastDays)}
         ${streakCardHTML(res.streak)}
+        ${capsuleCardHTML(res.capsule)}
         ${ev.type === "period" ? periodForecastHTML(res.period) : ""}
         ${yearCalendarChartHTML(ev)}
         <div class="nudge-card span-2 detail-history">
@@ -1482,6 +1504,22 @@ async function renderDetail(el, id) {
     toast(r.error || "已记录");
     openDetail(ev.id);
   };
+  const capsuleSave = document.getElementById("capsule-save");
+  if (capsuleSave) {
+    capsuleSave.onclick = async () => {
+      const note = document.getElementById("capsule-note")?.value || "";
+      const r = await api("/events/" + ev.id + "/capsule", {
+        method: "POST",
+        body: JSON.stringify({ note })
+      });
+      if (r.error) {
+        toast(r.error);
+        return;
+      }
+      toast("已封存今年的话");
+      openDetail(ev.id);
+    };
+  }
 }
 
 function timelineRow(h) {
