@@ -1,9 +1,9 @@
-{
+﻿{
   "regions": ["hnd1"],
   "functions": {
     "api/index.js": {
       "maxDuration": 60,
-      "includeFiles": "{seed.data.json,store.js,engine.js,digest.js,ledger.js,feishu-bot.js,feishu-event-http.js,sql/**,public/**}"
+      "includeFiles": "{seed.data.json,store.js,engine.js,digest.js,ledger.js,feishu-bot.js,feishu-event-http.js,lib/**,middleware/**,routes/**,sql/**",public/**}"
     },
     "api/feishu-process.js": {
       "maxDuration": 60,
