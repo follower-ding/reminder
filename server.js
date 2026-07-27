@@ -516,6 +516,22 @@ app.get('/api/recommend', async (req, res) => {
   }
 });
 
+app.get('/api/comfort', async (req, res) => {
+  try {
+    const { buildComfortText } = require('./feishu-event-http');
+    const { pickComfort } = require('./lib/comfort');
+    const offset = Math.max(0, parseInt(req.query.n || req.query.offset || '0', 10) || 0);
+    const text = await buildComfortText(offset);
+    res.json({
+      text,
+      offset,
+      sample: pickComfort({ date: dateStr(), offset, context: 'general' })
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/digests', async (req, res) => {
   try {
     const config = await loadConfig();
@@ -594,7 +610,7 @@ app.get('/api/health', async (req, res) => {
     res.json({
       status: 'ok',
       time: dateStr(),
-      version: '4.1.27',
+      version: '4.1.28',
       brand: BRAND.name,
       app_url: APP_URL,
       deepseek: { configured: !!process.env.DEEPSEEK_API_KEY },

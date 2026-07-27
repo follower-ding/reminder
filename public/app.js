@@ -946,6 +946,11 @@ async function renderToday(el) {
       </div>
       ${!feishuOn ? `<span class="badge fail">飞书未启用</span>` : botOn ? `<span class="badge ok">飞书机器人</span>` : `<span class="badge ok">飞书推送</span>`}
     </div>
+    <div class="comfort-strip">
+      <button type="button" class="btn-comfort" id="today-comfort" aria-label="哄哄她">哄哄她</button>
+      <p class="comfort-line" id="comfort-line" hidden></p>
+      <button type="button" class="btn-secondary btn-small hidden" id="comfort-again">换一句</button>
+    </div>
     ${total ? `
       <div class="progress-wrap" aria-label="今日进度">
         <div class="progress-meta"><span>已确认 ${done.length}/${total}</span><span>${pct}%</span></div>
@@ -972,6 +977,25 @@ async function renderToday(el) {
   if (addBtn) addBtn.onclick = () => showEventForm(null);
   const listBtn = document.getElementById("today-list");
   if (listBtn) listBtn.onclick = () => renderView("events");
+  let comfortOffset = 0;
+  const loadComfort = async (bump) => {
+    if (bump) comfortOffset += 1;
+    const r = await api("/comfort?n=" + comfortOffset);
+    const line = document.getElementById("comfort-line");
+    const again = document.getElementById("comfort-again");
+    if (r.error || !line) {
+      toast(r.error || "暂时抽不出句子");
+      return;
+    }
+    const text = String(r.text || "").replace(/^哄哄她[^\n]*\n💬\s*/, "").trim() || r.text;
+    line.hidden = false;
+    line.textContent = text;
+    if (again) again.classList.remove("hidden");
+  };
+  const comfortBtn = document.getElementById("today-comfort");
+  if (comfortBtn) comfortBtn.onclick = () => loadComfort(false);
+  const againBtn = document.getElementById("comfort-again");
+  if (againBtn) againBtn.onclick = () => loadComfort(true);
   el.querySelectorAll("[data-open]").forEach((n) => {
     n.addEventListener("click", (e) => {
       if (e.target.closest("[data-unack]")) return;
