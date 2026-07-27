@@ -125,16 +125,31 @@ function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 /* Lunar conversion (Intl API) */
-const LUNAR_CN = {正:1,二:2,三:3,四:4,五:5,六:6,七:7,八:8,九:9,十:10,十一:11,十二:12,腊:12};
-const LUNAR_MONTH_NAME = ["", "正月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "十一月", "腊月"];
+const LUNAR_CN = {正:1,二:2,三:3,四:4,五:5,六:6,七:7,八:8,九:9,十:10,十一:11,十二:12,腊:12,冬:11};
+const LUNAR_MONTH_NAME = ["", "正月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "冬月", "腊月"];
+const LUNAR_DAY_DIGIT = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"];
 let _lunFmt = null;
 function _lunF() { if (!_lunFmt) _lunFmt = new Intl.DateTimeFormat("zh-CN-u-ca-chinese",{year:"numeric",month:"numeric",day:"numeric"}); return _lunFmt; }
+function lunarDayName(day) {
+  const n = Number(day) || 0;
+  if (n <= 0) return String(day || "");
+  if (n <= 10) return "初" + LUNAR_DAY_DIGIT[n];
+  if (n < 20) return "十" + LUNAR_DAY_DIGIT[n - 10];
+  if (n === 20) return "二十";
+  if (n < 30) return "廿" + LUNAR_DAY_DIGIT[n - 20];
+  if (n === 30) return "三十";
+  return String(n);
+}
+function formatLunarMD(mon, day) {
+  return LUNAR_MONTH_NAME[mon] + lunarDayName(day);
+}
 function lunarToSolar(mon,day,year) {
-  const s=new Date(year,0,1),e=new Date(year+1,0,20),f=_lunF(),d=new Date(s);
-  while(d<=e){const p=f.formatToParts(d);let lm=0,ld=0;for(const x of p){if(x.type==="month")lm=LUNAR_CN[x.value.replace(/月$/,"")]||0;if(x.type==="day")ld=parseInt(x.value,10)}if(lm===mon&&ld===day)return new Date(d);d.setDate(d.getDate()+1)}return null
+  const s=new Date(year,0,1,12,0,0,0),e=new Date(year+1,0,20,12,0,0,0),f=_lunF(),d=new Date(s);
+  while(d<=e){const p=f.formatToParts(d);let lm=0,ld=0;for(const x of p){if(x.type==="month")lm=LUNAR_CN[x.value.replace(/月$/,"")]||0;if(x.type==="day")ld=parseInt(x.value,10)}if(lm===mon&&ld===day)return new Date(d.getFullYear(),d.getMonth(),d.getDate(),12,0,0,0);d.setDate(d.getDate()+1)}return null
 }
 function solarToLunar(date) {
-  const d = date instanceof Date ? date : new Date(date);
+  const raw = date instanceof Date ? date : new Date(date);
+  const d = new Date(raw.getFullYear(), raw.getMonth(), raw.getDate(), 12, 0, 0, 0);
   const parts = _lunF().formatToParts(d);
   let mon = 0, day = 0;
   for (const p of parts) {
@@ -142,7 +157,7 @@ function solarToLunar(date) {
     if (p.type === "day") day = parseInt(p.value, 10) || 0;
   }
   if (!mon || !day) return null;
-  return { month: mon, day, label: LUNAR_MONTH_NAME[mon] + day + "日" };
+  return { month: mon, day, label: formatLunarMD(mon, day) };
 }
 function formatSolarMD(date) {
   const d = date instanceof Date ? date : new Date(date);
@@ -280,7 +295,7 @@ function nextOccurrence(ev, forecastDays) {
   let lunarText = "";
   if (s.mode === "yearly" && s.month && s.day) {
     if (isLunar) {
-      lunarText = LUNAR_MONTH_NAME[s.month] + s.day + "日";
+      lunarText = formatLunarMD(s.month, s.day);
       anchorLabel = "农历" + lunarText;
       pairLabel = "阳历" + solarText;
     } else {
@@ -343,22 +358,36 @@ function countdownHeroHTML(ev, check, forecastDays) {
           <span class="cal-v">${esc(next.solarText)} · 周${["日","一","二","三","四","五","六"][next.date.getDay()]}</span>
         </div>
       </div>
-      <p class="detail-next-note">农历固定；阳历每年不同，见下方历年表</p>`;
+      <p class="detail-next-note">农历月日每年固定；对应阳历会变，见下方历年表</p>`;
     } else {
+      let birthLunarRow = "";
+      if (ev.birth_year && ev.schedule?.month && ev.schedule?.day) {
+        const born = new Date(ev.birth_year, ev.schedule.month - 1, ev.schedule.day, 12);
+        const bornLun = solarToLunar(born);
+        if (bornLun) {
+          birthLunarRow = `
+        <div class="cal-row highlight">
+          <span class="cal-ico">${iconSvg("moon")}</span>
+          <span class="cal-k">出生年农历</span>
+          <span class="cal-v">${esc(bornLun.label)} · ${esc(String(ev.birth_year))}</span>
+        </div>`;
+        }
+      }
       dateBlock = `
       <div class="cal-pair">
         <div class="cal-row">
           <span class="cal-ico">${iconSvg("sun")}</span>
-          <span class="cal-k">阳历日期</span>
-          <span class="cal-v">${esc(next.solarText)}</span>
+          <span class="cal-k">阳历生日</span>
+          <span class="cal-v">${esc(next.solarText)}（每年固定）</span>
         </div>
+        ${birthLunarRow}
         <div class="cal-row">
           <span class="cal-ico">${iconSvg("moon")}</span>
-          <span class="cal-k">对应农历</span>
-          <span class="cal-v">${esc(next.lunarText || "—")}</span>
+          <span class="cal-k">下次对应农历</span>
+          <span class="cal-v">${esc(next.lunarText || "—")} · ${esc(String(next.date.getFullYear()))}</span>
         </div>
       </div>
-      <p class="detail-next-note">生日建议改用农历，每年阳历会变</p>`;
+      <p class="detail-next-note">阳历每年同日，农历会变。若过农历生日，请改选「农历」并填农历月日（如冬月初二＝月11日2）</p>`;
     }
   }
 
@@ -396,7 +425,7 @@ function yearCalendarRows(ev, years = 8) {
     if (isLunar) {
       solar = lunarToSolar(s.month, s.day, y);
       if (!solar) continue;
-      lunarLabel = LUNAR_MONTH_NAME[s.month] + s.day + "日";
+      lunarLabel = formatLunarMD(s.month, s.day);
     } else {
       solar = new Date(y, s.month - 1, s.day);
       const lun = solarToLunar(solar);
@@ -605,7 +634,7 @@ function yearCalendarChartHTML(ev) {
   if (!rows.length) return "";
 
   if (lunarMode) {
-    const lunarName = LUNAR_MONTH_NAME[s.month] + s.day + "日";
+    const lunarName = formatLunarMD(s.month, s.day);
     const tableRows = rows.map((r, i) => `
       <tr class="${r.isNext ? "is-next" : ""} ${r.past ? "is-past" : ""}" style="--row:${i}">
         <td>${r.year}${r.isNext ? '<span class="tag-next">下次</span>' : ""}</td>
@@ -1480,19 +1509,23 @@ function eventFormHTML(ev, spaceHint) {
       <div class="form-group"><label>名称</label><input name="name" required value="${esc(ev?.name || "")}"></div>
       <div id="fields-birthday" class="${space === "moment" && subtype === "birthday" ? "" : "hidden"}">
         <div class="form-row">
-          <div class="form-group"><label>月</label><input name="month" type="number" min="1" max="12" value="${s.month || ""}"></div>
-          <div class="form-group"><label>日</label><input name="day" type="number" min="1" max="31" value="${s.day || ""}"></div>
+          <div class="form-group"><label id="bday-month-label">月</label><input name="month" type="number" min="1" max="12" value="${s.month || ""}"></div>
+          <div class="form-group"><label id="bday-day-label">日</label><input name="day" type="number" min="1" max="31" value="${s.day || ""}"></div>
         </div>
         <div class="form-row">
           <div class="form-group"><label>历法</label>
-            <select name="calendar">
-              <option value="lunar" ${(ev?.calendar || "lunar") === "lunar" ? "selected" : ""}>农历（推荐，阳历每年不同）</option>
-              <option value="solar" ${ev?.calendar === "solar" ? "selected" : ""}>阳历（公历，每年同日）</option>
+            <select name="calendar" id="bday-calendar">
+              <option value="lunar" ${(ev?.calendar || "lunar") === "lunar" ? "selected" : ""}>农历（推荐：每年过阴历）</option>
+              <option value="solar" ${ev?.calendar === "solar" ? "selected" : ""}>阳历（公历：每年同日）</option>
             </select>
           </div>
           <div class="form-group"><label>出生年（可选）</label><input name="birth_year" type="number" min="1900" max="2100" placeholder="如 2000" value="${ev?.birth_year || ""}"></div>
         </div>
-        <p class="form-hint cal-hint">过农历生日请选农历，填写正月=1、廿六=26。下方历年表会列出每年对应的阳历几月几号。</p>
+        <div id="bday-preview" class="bday-preview" aria-live="polite"></div>
+        <div class="action-btns" style="margin:.35rem 0 .55rem">
+          <button type="button" class="btn-secondary btn-small" id="btn-solar-to-lunar">用阳历换算成农历填写</button>
+        </div>
+        <p class="form-hint cal-hint" id="bday-hint">过农历生日：历法选农历，月日填农历（冬月初二＝月 11、日 2）。不要把阳历 11月27 填进农历栏。</p>
         <div class="form-row">
           <div class="form-group"><label>提前（天）</label><input name="remind_ahead" type="number" min="0" value="${ev?.remind_ahead ?? 3}"></div>
           <div class="form-group"><label>推送时刻</label><input name="time" type="time" value="${s.time || "09:00"}"></div>
@@ -1588,6 +1621,69 @@ function setupEventForm(modal, ev, spaceHint) {
   form.mode?.addEventListener("change", syncMd);
   syncMd();
   syncSpaceUI(spaceInput.value, modal.querySelector("#field-subtype")?.value);
+
+  const syncBdayFormHints = () => {
+    const cal = form.calendar?.value || "lunar";
+    const isLunar = cal === "lunar";
+    const ml = modal.querySelector("#bday-month-label");
+    const dl = modal.querySelector("#bday-day-label");
+    const hint = modal.querySelector("#bday-hint");
+    const preview = modal.querySelector("#bday-preview");
+    if (ml) ml.textContent = isLunar ? "农历月" : "阳历月";
+    if (dl) dl.textContent = isLunar ? "农历日" : "阳历日";
+    if (hint) {
+      hint.textContent = isLunar
+        ? "过农历生日：只填农历月日即可（冬月初二＝月 11、日 2）。每年提醒会按农历换算到对应阳历。"
+        : "过阳历生日：月日是公历（如 11月27）。对应农历每年会变；填出生年后可看到出生年农历。";
+    }
+    if (!preview) return;
+    const month = +form.month?.value || 0;
+    const day = +form.day?.value || 0;
+    const by = +form.birth_year?.value || 0;
+    if (!month || !day) {
+      preview.innerHTML = `<span class="form-hint">填写月日后这里会显示换算预览</span>`;
+      return;
+    }
+    if (isLunar) {
+      const y = by || new Date().getFullYear();
+      const solar = lunarToSolar(month, day, y);
+      preview.innerHTML = solar
+        ? `<strong>${esc(formatLunarMD(month, day))}</strong> → ${by ? by + "年" : y + "年"}阳历 <strong>${esc(formatSolarMD(solar))}</strong>`
+        : `<span class="form-hint">该年找不到对应阳历，请检查月日</span>`;
+    } else if (by) {
+      const lun = solarToLunar(new Date(by, month - 1, day, 12));
+      preview.innerHTML = lun
+        ? `<strong>${by}年${month}月${day}日</strong>（阳历）→ 出生农历 <strong>${esc(lun.label)}</strong>`
+        : `<span class="form-hint">无法换算农历</span>`;
+    } else {
+      preview.innerHTML = `<span class="form-hint">阳历 ${month}月${day}日（每年固定）。填写出生年可预览出生农历。</span>`;
+    }
+  };
+  ["calendar", "month", "day", "birth_year"].forEach((name) => {
+    form[name]?.addEventListener("input", syncBdayFormHints);
+    form[name]?.addEventListener("change", syncBdayFormHints);
+  });
+  syncBdayFormHints();
+
+  const btnConvert = modal.querySelector("#btn-solar-to-lunar");
+  if (btnConvert) {
+    btnConvert.onclick = () => {
+      const month = +form.month?.value || 0;
+      const day = +form.day?.value || 0;
+      const by = +form.birth_year?.value || 0;
+      if (!month || !day || !by) {
+        toast("请先填阳历月日和出生年，再换算");
+        return;
+      }
+      const lun = solarToLunar(new Date(by, month - 1, day, 12));
+      if (!lun) return toast("换算失败");
+      form.calendar.value = "lunar";
+      form.month.value = String(lun.month);
+      form.day.value = String(lun.day);
+      syncBdayFormHints();
+      toast("已填入农历 " + lun.label + "（请确认后保存）");
+    };
+  }
 
   form.onsubmit = async (e) => {
     e.preventDefault();
