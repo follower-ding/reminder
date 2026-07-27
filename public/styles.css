@@ -192,6 +192,38 @@ h1,h2,h3 { font-family: var(--font-d); font-weight: 600; letter-spacing: -.02em;
 .action-body { margin-top: .45rem; font-size: .95rem; }
 .action-go { margin-top: .65rem; font-size: .78rem; font-weight: 700; color: var(--teal); }
 .badge.soft-count { background: rgba(15,61,58,.08); color: var(--muted); }
+.badge.care {
+  background: var(--amber-soft); color: #9A6233; font-size: .68rem; font-weight: 700;
+}
+.action-card.has-care {
+  background: linear-gradient(165deg, var(--amber-soft) 0%, #fff 55%);
+  border-color: rgba(201,132,74,.2);
+}
+.action-card.is-urgent .action-rail { width: 5px; }
+.action-care {
+  margin-top: .5rem; font-family: var(--font-d); font-size: 1.02rem; line-height: 1.45;
+  letter-spacing: -.01em; color: var(--ink);
+}
+.empty-actions {
+  display: flex; flex-wrap: wrap; gap: .5rem; justify-content: center; margin-top: 1rem;
+}
+.today-empty .empty-ico {
+  background: rgba(91,124,114,.1); color: var(--teal-deep); font-size: 1.1rem;
+}
+.empty-done.is-clear .empty-ico { background: rgba(5,150,105,.12); color: #059669; }
+.upcoming-list { display: grid; gap: .45rem; margin-bottom: .5rem; }
+.upcoming-row {
+  display: flex; justify-content: space-between; align-items: center; gap: .75rem;
+  width: 100%; text-align: left; padding: .75rem .9rem; border-radius: 14px;
+  border: 1px solid var(--line); background: var(--card); cursor: pointer;
+  font: inherit; color: inherit; box-shadow: var(--shadow-sm);
+}
+.upcoming-row:hover { border-color: rgba(91,124,114,.28); }
+.upcoming-row.birthday { border-left: 3px solid var(--amber); }
+.upcoming-row.period { border-left: 3px solid var(--rose); }
+.upcoming-name { font-weight: 650; min-width: 0; }
+.upcoming-type { color: var(--muted); font-weight: 600; font-size: .85em; }
+.upcoming-when { color: var(--muted); font-size: .82rem; flex-shrink: 0; }
 .btn-ack { width: 100%; padding: .85rem 1rem; font-size: 1rem; }
 .today-list { margin-top: .2rem; }
 .progress-wrap { margin: 0 0 1rem; }
@@ -262,12 +294,6 @@ h1,h2,h3 { font-family: var(--font-d); font-weight: 600; letter-spacing: -.02em;
   display: grid; place-items: center; font-size: .75rem; flex-shrink: 0; margin-top: .1rem;
 }
 .done-name { font-weight: 650; font-size: .92rem; }
-.upcoming-list { display: grid; gap: .35rem; }
-.upcoming-row {
-  display: flex; justify-content: space-between; width: 100%; border: 0;
-  background: transparent; padding: .55rem 0; border-bottom: 1px solid var(--line);
-  font: inherit; color: inherit; text-align: left;
-}
 .section-title.soft { margin-top: 1.4rem; }
 .action-btns { display: flex; flex-wrap: wrap; gap: 8px; }
 .space-picker { display: grid; gap: .65rem; }

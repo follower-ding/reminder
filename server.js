@@ -347,6 +347,8 @@ app.get('/api/dashboard', async (req, res) => {
       }
     }
     upcoming.sort((a, b) => (a.days || 99) - (b.days || 99));
+    pending.sort(sortDashboardPending);
+    done.sort(sortDashboardPending);
     res.json({
       date: todayStr,
       pending,
@@ -359,6 +361,21 @@ app.get('/api/dashboard', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+/** Today list: period/birthday first, then urgent, then by push time. */
+function sortDashboardPending(a, b) {
+  const rank = (r) => {
+    if (r.type === 'period') return r.urgent || r.care?.phase === 'period' ? 0 : 1;
+    if (r.type === 'birthday') return 2;
+    if (r.urgent) return 3;
+    if (r.space === 'task') return 4;
+    if (r.space === 'moment') return 5;
+    return 6;
+  };
+  const d = rank(a) - rank(b);
+  if (d) return d;
+  return String(a.time || '99:99').localeCompare(String(b.time || '99:99'));
+}
 
 /** 鉴权 API：供详情「误操作恢复」等；网页今日不做「确认收到」主按钮 */
 app.post('/api/events/:id/ack', async (req, res) => {
@@ -577,7 +594,7 @@ app.get('/api/health', async (req, res) => {
     res.json({
       status: 'ok',
       time: dateStr(),
-      version: '4.1.26',
+      version: '4.1.27',
       brand: BRAND.name,
       app_url: APP_URL,
       deepseek: { configured: !!process.env.DEEPSEEK_API_KEY },

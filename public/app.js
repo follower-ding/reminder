@@ -289,7 +289,24 @@ function groupPending(list) {
       g._ids.push(r.eventId);
     }
   }
-  return [...map.values()];
+  return sortPendingItems([...map.values()]);
+}
+
+/** Client-side mirror of server sortDashboardPending. */
+function sortPendingItems(list) {
+  const rank = (r) => {
+    if (r.type === "period") return r.urgent || r.care?.phase === "period" ? 0 : 1;
+    if (r.type === "birthday") return 2;
+    if (r.urgent) return 3;
+    if (r.space === "task") return 4;
+    if (r.space === "moment") return 5;
+    return 6;
+  };
+  return [...(list || [])].sort((a, b) => {
+    const d = rank(a) - rank(b);
+    if (d) return d;
+    return String(a.time || "99:99").localeCompare(String(b.time || "99:99"));
+  });
 }
 function closeModal() { document.querySelectorAll(".modal-overlay").forEach((m) => m.remove()); }
 function openModal(html, center = true) {
@@ -873,15 +890,18 @@ async function renderToday(el) {
   if (dash.error) { el.innerHTML = `<div class="empty-state"><p>${esc(dash.error)}</p></div>`; return; }
   const pending = dash.pending || dash.today || [];
   const done = dash.done || [];
+  const upcoming = dash.upcoming || [];
   const grouped = groupPending(pending);
   const total = pending.length + done.length;
   const pct = total ? Math.round((done.length / total) * 100) : 0;
   const feishuOn = !!cfg.feishu?.enabled;
   const botOn = !!cfg.feishu?.bot_configured;
   const hideHint = localStorage.getItem(HINT_KEY) === "1";
+  const allClear = !pending.length && done.length > 0;
+  const blankDay = !pending.length && !done.length;
   const subtitle = pending.length
     ? `还有 ${pending.length} 件 · 飞书卡片点「已收到」确认`
-    : (done.length ? "今天都搞定了" : "今天没有待办，留白也好");
+    : (allClear ? "今天都搞定了" : (upcoming.length ? `今天空闲 · ${upcoming.length} 件即将到来` : "今天没有待办，留白也好"));
 
   let hint = "";
   if (!hideHint) {
@@ -891,6 +911,31 @@ async function renderToday(el) {
       hint = `<div class="hint-banner soft" id="feishu-hint">在飞书点卡片「已收到」按钮即可确认（不跳转网页）；也可回「收到」。误点可在下方撤销。<button type="button" class="hint-dismiss" data-dismiss-hint aria-label="关闭提示">知道了</button></div>`;
     }
   }
+
+  const emptyBlock = blankDay ? `
+    <div class="empty-done today-empty">
+      <div class="empty-ico" aria-hidden="true">◇</div>
+      <p>${upcoming.length ? "今天没有待办" : "今天很安静"}</p>
+      <p class="form-hint">${upcoming.length ? "下面是即将到来的事项；也可以先加一条习惯" : "加一条习惯、纪念日或经期记录，今日就会亮起来"}</p>
+      <div class="empty-actions">
+        <button type="button" class="btn-action is-primary" id="today-add">添加事项</button>
+        <button type="button" class="btn-action" id="today-list">去清单</button>
+      </div>
+    </div>` : (allClear ? `
+    <div class="empty-done is-clear">
+      <div class="empty-ico" aria-hidden="true">✓</div>
+      <p>今天都搞定了</p>
+      <p class="form-hint">${upcoming.length ? "可以看看即将到来" : "好好休息，或去清单加一条"}</p>
+      <div class="empty-actions">
+        <button type="button" class="btn-action" id="today-list">去清单</button>
+      </div>
+    </div>` : "");
+
+  const upcomingBlock = upcoming.length ? `
+    <div class="section-title soft"><h3>${blankDay || allClear ? "即将到来" : "即将到来"}</h3>
+      <span class="form-hint">${upcoming.length} 件 · 7 天内</span>
+    </div>
+    <div class="upcoming-list">${upcoming.map((r) => upcomingRow(r)).join("")}</div>` : "";
 
   el.innerHTML = `
     <div class="hero today-hero">
@@ -908,21 +953,14 @@ async function renderToday(el) {
       </div>` : ""}
     ${hint}
     <div class="today-list">
-      ${grouped.length ? grouped.map((r, i) => pendingCard(r, i)).join("") : `
-        <div class="empty-done">
-          <div class="empty-ico" aria-hidden="true">✓</div>
-          <p>${done.length ? "今天都搞定了" : "今天没有待办"}</p>
-          <p class="form-hint">可在「清单」添加习惯或待办</p>
-        </div>`}
+      ${grouped.length ? grouped.map((r, i) => pendingCard(r, i)).join("") : emptyBlock}
     </div>
     ${done.length ? `
       <details class="done-fold"${pending.length ? "" : " open"}>
         <summary>已确认 · ${done.length}</summary>
         <div class="done-list">${done.map((r) => doneCard(r)).join("")}</div>
       </details>` : ""}
-    ${(dash.upcoming || []).length ? `
-      <div class="section-title soft"><h3>即将到来</h3></div>
-      <div class="upcoming-list">${dash.upcoming.map((r) => upcomingRow(r)).join("")}</div>` : ""}
+    ${upcomingBlock}
   `;
   el.querySelectorAll("[data-dismiss-hint]").forEach((b) => {
     b.onclick = () => {
@@ -930,6 +968,10 @@ async function renderToday(el) {
       document.getElementById("feishu-hint")?.remove();
     };
   });
+  const addBtn = document.getElementById("today-add");
+  if (addBtn) addBtn.onclick = () => showEventForm(null);
+  const listBtn = document.getElementById("today-list");
+  if (listBtn) listBtn.onclick = () => renderView("events");
   el.querySelectorAll("[data-open]").forEach((n) => {
     n.addEventListener("click", (e) => {
       if (e.target.closest("[data-unack]")) return;
@@ -953,17 +995,25 @@ async function renderToday(el) {
 function pendingCard(r, idx = 0) {
   const space = r.space || "habit";
   const count = r._count > 1 ? `<span class="badge soft-count">×${r._count}</span>` : "";
+  const care = r.care;
+  const careBadge = care ? `<span class="badge care">关怀</span>` : "";
   const msg = cleanText(r.message || "");
-  return `<article class="action-card ${esc(space)} ${esc(r.type || "")}" data-open="${r.eventId || ""}" style="animation-delay:${Math.min(idx, 8) * 40}ms">
+  const careLine = care?.sweet
+    ? `<p class="action-care">${esc(care.sweet)}</p>`
+    : (msg ? `<p class="action-body">${esc(msg)}</p>` : "");
+  const dayBit = care?.day != null
+    ? ` · Day ${care.day}`
+    : (r.cycleDay != null ? ` · 第 ${r.cycleDay} 天` : "");
+  return `<article class="action-card ${esc(space)} ${esc(r.type || "")}${care ? " has-care" : ""}${r.urgent ? " is-urgent" : ""}" data-open="${r.eventId || ""}" style="animation-delay:${Math.min(idx, 8) * 40}ms">
     <div class="action-rail" aria-hidden="true"></div>
     <div class="action-main">
       <div class="action-top">
-        <h3>${esc(r.name || "")}${count}</h3>
+        <h3>${esc(r.name || "")}${count}${careBadge}</h3>
         ${spaceBadge(space)}
       </div>
-      <p class="action-meta">${r.time ? esc(r.time) + " · " : ""}${esc(typeLabel(r.type))}</p>
-      ${msg ? `<p class="action-body">${esc(msg)}</p>` : ""}
-      <p class="action-go">查看详情</p>
+      <p class="action-meta">${r.time ? esc(r.time) + " · " : ""}${esc(typeLabel(r.type))}${dayBit}</p>
+      ${careLine}
+      <p class="action-go">${care ? "查看今日关怀" : "查看详情"}</p>
     </div>
   </article>`;
 }
@@ -978,9 +1028,11 @@ function doneCard(r) {
   </div>`;
 }
 function upcomingRow(r) {
-  return `<button type="button" class="upcoming-row" data-open="${r.eventId || ""}">
-    <span>${esc(r.name || "")}</span>
-    <span class="form-hint">${r.days != null ? r.days + " 天后" : ""}</span>
+  const dayLabel = r.days === 0 ? "今天" : (r.days === 1 ? "明天" : `${r.days} 天后`);
+  const typeBit = r.type === "birthday" ? "生日 · " : (r.type === "period" ? "经期 · " : "");
+  return `<button type="button" class="upcoming-row ${esc(r.type || "")}" data-open="${r.eventId || ""}">
+    <span class="upcoming-name"><span class="upcoming-type">${esc(typeBit)}</span>${esc(r.name || "")}</span>
+    <span class="upcoming-when">${esc(dayLabel)}${r.time ? " · " + esc(r.time) : ""}</span>
   </button>`;
 }
 

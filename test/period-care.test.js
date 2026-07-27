@@ -28,6 +28,7 @@ describe('period care packs', () => {
     const block = formatCareFeishuBlock(care);
     assert.match(block, /第二天/);
     assert.match(block, /少碰/);
+    assert.match(block, /• /);
   });
 
   it('builds cycle timeline with active menses', () => {
