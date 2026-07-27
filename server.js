@@ -31,8 +31,11 @@ const engine = require('./engine');
 const digest = require('./digest');
 const ledger = require('./ledger');
 const feishuBot = require('./feishu-bot');
+const { resolveFeishuChatId, mergeFeishuConfig, feishuPushReady, sendFeishuCard, sendServerchan } = require('./lib/push');
 const { authMiddleware, createToken, verifyToken, TOKEN_SECRET } = require('./middleware/auth');
 const { errorHandler, asyncHandler } = require('./middleware/error');
+const pushRoutes = require('./routes/push');
+const demoRoutes = require('./routes/demo');
 
 const PORT = process.env.PORT || 3333;
 const APP_URL = process.env.APP_URL || 'https://reminder-three-gamma.vercel.app';
@@ -98,80 +101,6 @@ function nextId(arr) {
 const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 // ─── 推送 ────────────────────────────────────────────
-function resolveFeishuChatId(config) {
-  return String(
-    config?.feishu?.chat_id || process.env.FEISHU_CHAT_ID || ''
-  ).trim();
-}
-
-/** 合并飞书配置：空 chat_id 不覆盖已绑定值（防止设置页/测试冲掉） */
-function mergeFeishuConfig(savedFeishu, patch = {}) {
-  const next = { ...(savedFeishu || {}) };
-  if (patch.enabled != null) next.enabled = !!patch.enabled;
-  if (patch.webhook_url != null) next.webhook_url = String(patch.webhook_url).trim();
-  if (patch.chat_id != null && String(patch.chat_id).trim()) {
-    next.chat_id = String(patch.chat_id).trim();
-  }
-  return next;
-}
-
-function feishuPushReady(config) {
-  if (!config?.feishu?.enabled) return false;
-  if (String(config.feishu?.webhook_url || '').trim()) return true;
-  return feishuBot.botConfigured() && !!resolveFeishuChatId(config);
-}
-
-async function sendFeishuCard(config, cardBody) {
-  if (!config.feishu?.enabled) return { ok: false, error: '飞书未启用' };
-  const webhook = String(config.feishu?.webhook_url || '').trim();
-  const chatId = resolveFeishuChatId(config);
-
-  // 优先应用机器人（无 Webhook）；有 webhook 时仍可用
-  if (!webhook && feishuBot.botConfigured() && chatId) {
-    return feishuBot.sendInteractiveCard(chatId, cardBody);
-  }
-  if (webhook) {
-    try {
-      const res = await fetch(webhook, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cardBody),
-      });
-      const text = await res.text();
-      let parsed;
-      try { parsed = JSON.parse(text); } catch { parsed = null; }
-      if (parsed && parsed.code && parsed.code !== 0) {
-        return { ok: false, error: parsed.msg || `飞书错误 code=${parsed.code}`, data: text };
-      }
-      if (!res.ok) return { ok: false, error: `HTTP ${res.status}`, data: text };
-      return { ok: true, data: text };
-    } catch (e) {
-      return { ok: false, error: e.message };
-    }
-  }
-  if (feishuBot.botConfigured() && !chatId) {
-    return {
-      ok: false,
-      error: '应用机器人已配置，但还没有 chat_id：请在目标群 @Nudge 发一句「绑定」，或在设置里填写 chat_id'
-    };
-  }
-  return { ok: false, error: '飞书未配置：请用应用机器人（chat_id）或群 Webhook' };
-}
-
-async function sendServerchan(config, title, content) {
-  if (!config.serverchan?.enabled || !config.serverchan?.sendkey) return { ok: false, error: 'Server酱未配置' };
-  try {
-    const res = await fetch(`https://sctapi.ftqq.com/${config.serverchan.sendkey}.send`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, desp: content }),
-    });
-    const json = await res.json();
-    return { ok: json.code === 0, data: json };
-  } catch (e) {
-    return { ok: false, error: e.message };
-  }
-}
 
 function attachAckUrls(items, day) {
   const d = day || dateStr();
@@ -1173,6 +1102,10 @@ app.post('/api/feishu/send-card', async (req, res) => {
 });
 
 // ─── SPA 兜底 ─────────────────────────────────────────
+// Mount extracted route modules
+app.use("/api", pushRoutes);
+app.use("/api", demoRoutes);
+
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api/')) return res.status(404).json({ error: '未知 API' });
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
