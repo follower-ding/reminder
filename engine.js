@@ -2,7 +2,7 @@
  * Nudge engine — space 模型 + 调度 + 卡片
  */
 const crypto = require('crypto');
-const { lunarToSolar } = require('./lib/lunar');
+const { lunarToSolar, solarToLunar } = require('./lib/lunar');
 
 const TYPE_META = {
   birthday: { label: '生日', icon: '🎂', modes: ['yearly'], headerColor: 'orange' },
@@ -739,6 +739,35 @@ function normalizeEventInput(body) {
     schedule.time = t ? `${String(t.hour).padStart(2, '0')}:${String(t.minute).padStart(2, '0')}` : undefined;
   }
 
+  // Birthday: accept birth_date / birth_solar (阳历) → store lunar month/day + birth_year
+  let calendar = raw.calendar === 'lunar' || raw.calendar === 'solar' ? raw.calendar : undefined;
+  let birthYear = null;
+  let birthSolar = null;
+  if (raw.birth_year != null && raw.birth_year !== '') {
+    const by = parseInt(raw.birth_year, 10);
+    if (Number.isFinite(by) && by >= 1900 && by <= 2100) birthYear = by;
+  }
+  const birthDateRaw = raw.birth_date || raw.birth_solar;
+  if (space === 'moment' && subtype === 'birthday' && birthDateRaw) {
+    const m = String(birthDateRaw).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) {
+      const y = +m[1];
+      const mo = +m[2];
+      const d = +m[3];
+      const lun = solarToLunar(new Date(y, mo - 1, d, 12));
+      if (lun) {
+        calendar = 'lunar';
+        birthYear = y;
+        birthSolar = m[0];
+        schedule.month = lun.month;
+        schedule.day = lun.day;
+        schedule.mode = 'yearly';
+      }
+    }
+  } else if (raw.birth_solar && /^\d{4}-\d{2}-\d{2}$/.test(String(raw.birth_solar))) {
+    birthSolar = String(raw.birth_solar);
+  }
+
   const draft = {
     space,
     subtype,
@@ -751,13 +780,9 @@ function normalizeEventInput(body) {
     acks: raw.acks && typeof raw.acks === 'object' ? raw.acks : {},
     type: 'custom'
   };
-  if (raw.calendar === 'lunar' || raw.calendar === 'solar') {
-    draft.calendar = raw.calendar;
-  }
-  if (raw.birth_year != null && raw.birth_year !== '') {
-    const by = parseInt(raw.birth_year, 10);
-    if (Number.isFinite(by) && by >= 1900 && by <= 2100) draft.birth_year = by;
-  }
+  if (calendar === 'lunar' || calendar === 'solar') draft.calendar = calendar;
+  if (birthYear != null) draft.birth_year = birthYear;
+  if (birthSolar) draft.birth_solar = birthSolar;
   return syncTypeFromSpace(draft);
 }
 
