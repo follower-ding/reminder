@@ -79,13 +79,27 @@ describe('lunar calendar', () => {
     assert.equal(back.getDate(), 27);
   });
 
-  it('same solar MD maps to different lunar across years', () => {
-    const { solarToLunar } = require('../lib/lunar');
-    const a = solarToLunar(new Date(2000, 10, 27, 12));
-    const b = solarToLunar(new Date(2026, 10, 27, 12));
-    assert.equal(a.label, '冬月初二');
-    assert.equal(b.month, 10);
-    assert.equal(b.day, 19);
-    assert.notEqual(a.label, b.label);
+  it('birth_date solar converts to lunar birthday (冬月初二 → 2026-12-10)', () => {
+    const { solarToLunar, lunarToSolar } = require('../lib/lunar');
+    const out = engine.normalizeEventInput({
+      space: 'moment',
+      subtype: 'birthday',
+      name: '宝宝',
+      birth_date: '2000-11-27',
+      schedule: { time: '09:00' },
+      remind_ahead: 3
+    });
+    assert.equal(out.calendar, 'lunar');
+    assert.equal(out.birth_year, 2000);
+    assert.equal(out.birth_solar, '2000-11-27');
+    assert.equal(out.schedule.month, 11);
+    assert.equal(out.schedule.day, 2);
+    const lun = solarToLunar(new Date(2000, 10, 27, 12));
+    assert.equal(lun.label, '冬月初二');
+    const y2026 = lunarToSolar(out.schedule.month, out.schedule.day, 2026);
+    assert.ok(y2026);
+    assert.equal(y2026.getFullYear(), 2026);
+    assert.equal(y2026.getMonth() + 1, 12);
+    assert.equal(y2026.getDate(), 10);
   });
 });
