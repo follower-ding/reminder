@@ -612,7 +612,7 @@ app.get('/api/health', async (req, res) => {
     res.json({
       status: 'ok',
       time: dateStr(),
-      version: '4.1.29',
+      version: '4.1.30',
       brand: BRAND.name,
       app_url: APP_URL,
       deepseek: { configured: !!process.env.DEEPSEEK_API_KEY },
@@ -1012,6 +1012,17 @@ app.get('/api/events/:id/detail', async (req, res) => {
     const history = ledger.listByItem(data.push_ledger, id);
     const { computeStreak, isStreakEligible } = require('./lib/streak');
     const streak = isStreakEligible(ev) ? computeStreak(ev.acks, dateStr()) : null;
+    const { isCapsuleEligible, normalizeCapsules, getPreviousCapsule, getCapsuleForYear } = require('./lib/capsule');
+    let capsule = null;
+    if (isCapsuleEligible(ev)) {
+      const y = n.year;
+      capsule = {
+        eligible: true,
+        previous: getPreviousCapsule(ev, y),
+        this_year: getCapsuleForYear(ev, y),
+        list: normalizeCapsules(ev.capsules).slice(0, 8)
+      };
+    }
     let period = null;
     if (ev.type === 'period') {
       const forecast = predictPeriod(ev.schedule || {}, n);
@@ -1033,12 +1044,39 @@ app.get('/api/events/:id/detail', async (req, res) => {
         timeline: forecast ? buildCycleTimeline(forecast) : null
       };
     }
-    res.json({ item: ev, check, push_history: history, period, streak, brand: BRAND });
+    res.json({ item: ev, check, push_history: history, period, streak, capsule, brand: BRAND });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
- 
+
+app.post('/api/events/:id/capsule', async (req, res) => {
+  try {
+    const { upsertCapsule, isCapsuleEligible, normalizeCapsules } = require('./lib/capsule');
+    const data = await loadData();
+    const id = parseInt(req.params.id, 10);
+    const idx = data.events.findIndex((e) => e.id === id);
+    if (idx === -1) return res.status(404).json({ error: '未找到' });
+    const ev = migrateEvent(data.events[idx]);
+    if (!isCapsuleEligible(ev)) {
+      return res.status(400).json({ error: '仅生日/纪念日可写时间胶囊' });
+    }
+    const year = req.body?.year != null ? req.body.year : new Date().getFullYear();
+    const result = upsertCapsule(ev, { year, note: req.body?.note });
+    if (!result.ok) return res.status(400).json({ error: result.error });
+    data.events[idx] = { ...ev, capsules: result.capsules };
+    await saveData(data);
+    res.json({
+      ok: true,
+      item: migrateEvent(data.events[idx]),
+      capsules: normalizeCapsules(result.capsules),
+      entry: result.entry
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Mount extracted route modules before SPA fallback
 app.use('/api', pushRoutes);
 app.use('/api', demoRoutes);

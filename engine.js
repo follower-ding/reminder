@@ -404,7 +404,23 @@ function checkEvent(ev, n) {
       const m = msg.today
         ? msg.today.replace(/\{days\}/g, daysStr).replace(/\{name\}/g, e.name)
         : `${meta.icon} ${e.name} — 就是今天！`;
-      return { active: true, message: m, urgent: true, days: 0, name: e.name, type: e.type, time: sched.time || null };
+      const { getPreviousCapsule, formatCapsuleHint, isCapsuleEligible } = require('./lib/capsule');
+      let message = m;
+      let capsule = null;
+      if (isCapsuleEligible(e)) {
+        capsule = getPreviousCapsule(e, n.year);
+        if (capsule) message = `${m}\n${formatCapsuleHint(capsule, e.name)}`;
+      }
+      return {
+        active: true,
+        message,
+        urgent: true,
+        days: 0,
+        name: e.name,
+        type: e.type,
+        time: sched.time || null,
+        capsule
+      };
     }
     if (diff > 0 && diff <= ahead) {
       const m = msg.reminder
@@ -813,6 +829,8 @@ function normalizeEventInput(body) {
   if (calendar === 'lunar' || calendar === 'solar') draft.calendar = calendar;
   if (birthYear != null) draft.birth_year = birthYear;
   if (birthSolar) draft.birth_solar = birthSolar;
+  if (Array.isArray(raw.capsules)) draft.capsules = raw.capsules;
+  else if (Array.isArray(raw._capsules)) draft.capsules = raw._capsules;
   return syncTypeFromSpace(draft);
 }
 
