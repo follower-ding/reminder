@@ -203,6 +203,7 @@ function publicConfig(config) {
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+app.use(authMiddleware);
 
 // 认证中间件（HMAC 签名 Token，跨进程/冷启动有效）
 
