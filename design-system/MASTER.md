@@ -9,16 +9,16 @@
 **Note:** Run ui-ux-pro-max --design-system --persist to populate colors/typography/components.
 ---
 
-**Active Variant:** Soft UI Evolution · Teal + Orange CTA  
+**Active Variant:** Premium Minimal · Muted Sage + Warm Amber  
 **Synced:** 2026-07-27
 
 ## Design Intent（设计意图 — 项目专属）
 
 **Project:** 日常提醒
-**Enhanced:** 2026-07-27 03:02
-**One-liner:** 温暖好用的个人提醒：经期预测、生日、自定义定时推送与每日热点，表单极简、卡片精美
+**Enhanced:** 2026-07-27
+**One-liner:** Apple-like anniversary dashboard：轻量光感、鼠尾草绿 + 暖琥珀、高字阶、干净卡片
 
-**Mood keywords:** professional, refined, intentional
+**Mood keywords:** elegant, premium minimal, soft, intentional
 
 **Do NOT look like:**
 - 紫渐变Hero
