@@ -1,7 +1,7 @@
 {
   "name": "nudge",
   "version": "4.1.30",
-  "description": "Nudge ? ?????????",
+  "description": "Nudge — 轻推一下，刚好想起",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -13,12 +13,7 @@
     "mobile:open": "npx cap open android",
     "mobile:apk": "cd android && .\\gradlew.bat assembleDebug"
   },
-  "keywords": [
-    "reminder",
-    "feishu",
-    "serverchan",
-    "pwa"
-  ],
+  "keywords": ["reminder", "feishu", "serverchan", "pwa"],
   "license": "MIT",
   "dependencies": {
     "@capacitor/android": "^8.4.2",
