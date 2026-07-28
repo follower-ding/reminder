@@ -4,15 +4,12 @@
 const feishuBot = require('./feishu-bot');
 const store = require('./store');
 const engine = require('./engine');
-const { getDigestBundle } = require('./digest');
-
 const { loadData, saveData, loadConfig, saveConfig } = store;
 const {
   migrateEvents,
   checkEvent,
   isAcked,
   ackEvent,
-  buildFeishuCard,
   buildAckedCard,
   predictPeriod,
   verifyAckSig
@@ -151,17 +148,19 @@ async function rememberChatIdFromEvent(body) {
 
 function helpText(brand) {
   return [
-    `我是 ${brand}，飞书里可以这样说：`,
-    '• 收到 — 确认今日事项',
-    '• 今天事项 — 列出待确认',
-    '• 今天学什么 — 推送今日编程精读卡',
-    '• GitHub / 科技快讯 — 推送对应精选卡',
-    '• 经期要注意什么 — 结合周期问答',
-    '• 哄哄她 — 抽一句暖话（经期/生日会更贴境）',
-    '• 绑定 — 记下推送群 chat_id',
-    '• 帮助 — 再看一遍菜单',
+    `我是 ${brand}，飞书里可以直接说话，不必背口令。`,
+    '例如：「最近谁过生日」「这周有什么安排」「把热点再推一次」「换点学习资料」。',
     '',
-    '也可以直接问别的，我会结合今日事项与订阅摘要回答。'
+    '【常用动作】',
+    '• 收到 — 确认今日事项',
+    '• 今天事项 / 生日 / 日程 / 清单 / 概况 — 查询',
+    '• 今天学什么 / GitHub / 科技快讯 — 推送精选卡',
+    '• 换学习资料 · 换热点 · 重新推送热点 — 订阅控制',
+    '• 经期要注意什么 · 哄哄她 — 关怀',
+    '• 绑定 — 记下推送群',
+    '• 帮助 — 再看一遍',
+    '',
+    '其它话我会结合今日事项与订阅摘要回答；能执行的动作会自动帮你做。'
   ].join('\n');
 }
 
@@ -230,34 +229,33 @@ async function buildComfortText(offset = 0) {
 }
 
 async function buildChatContext() {
-  const parts = [];
-  const pending = await listPendingToday();
-  if (pending.length) {
-    parts.push(`今日尚未确认：${pending.map((p) => p.name).join('、')}。可回复「收到」确认。`);
-  }
-  const period = await periodContextNote();
-  if (period) parts.push(period);
+  const brain = require('./lib/feishu-brain');
   try {
-    const config = await loadConfig();
-    if (config.digests?.enabled !== false) {
-      const bundle = await getDigestBundle(config, dateStr(), { withAI: false });
-      for (const sec of (bundle.sections || []).slice(0, 3)) {
-        const titles = (sec.items || []).slice(0, 2).map((it) => it.title).filter(Boolean);
-        if (titles.length) parts.push(`${sec.title}摘要：${titles.join('；')}`);
-      }
+    return await brain.buildRichChatContext();
+  } catch (e) {
+    const parts = [];
+    const pending = await listPendingToday();
+    if (pending.length) {
+      parts.push(`今日尚未确认：${pending.map((p) => p.name).join('、')}。可回复「收到」确认。`);
     }
-  } catch {
-    /* ignore digest errors in chat context */
+    const period = await periodContextNote();
+    if (period) parts.push(period);
+    parts.push(`上下文组装失败：${e.message}`);
+    return parts.join('\n');
   }
-  parts.push('若用户问订阅内容，可建议说「今天学什么」「GitHub」「科技快讯」。');
-  return parts.join('\n');
 }
 
-async function answerQa(intent, userText) {
+async function pushDigestSource(source, { refresh = false } = {}) {
+  const brain = require('./lib/feishu-brain');
+  const r = await brain.buildDigestPush(source, { refresh });
+  if (!r.ok) return { text: r.error || '推送失败' };
+  return { text: r.text, card: r.card };
+}
+
+async function answerQa(intent, userText, qaMeta = {}) {
   const config = await loadConfig();
   const brand = config.brand?.name || 'Nudge';
-  const today = dateStr();
-  const appUrl = process.env.APP_URL || '';
+  const brain = require('./lib/feishu-brain');
 
   if (intent === 'help') return { text: helpText(brand) };
 
@@ -269,6 +267,19 @@ async function answerQa(intent, userText) {
       return `• ${p.name}${st}${p.message ? `：${p.message}` : ''}`;
     });
     return { text: `今日待确认（${pending.length}）：\n${lines.join('\n')}\n\n回「收到」可一键确认。` };
+  }
+
+  if (intent === 'birthdays') {
+    return { text: brain.formatBirthdayText(await brain.listBirthdays(60)) };
+  }
+  if (intent === 'upcoming') {
+    return { text: brain.formatUpcomingText(await brain.listUpcoming(14)) };
+  }
+  if (intent === 'inventory') {
+    return { text: brain.formatInventoryText(await brain.listInventory()) };
+  }
+  if (intent === 'summary') {
+    return { text: await brain.buildSummaryText(brand) };
   }
 
   if (intent === 'comfort') {
@@ -286,49 +297,36 @@ async function answerQa(intent, userText) {
     return { text: chat.text };
   }
 
-  if (intent === 'learning' || intent === 'github' || intent === 'news') {
-    const labels = { learning: '每日编程', github: 'GitHub 热门', news: '科技快讯' };
-    if (config.digests?.enabled === false || config.digests?.[intent]?.enabled === false) {
-      return { text: `「${labels[intent]}」未开启。请到网页「订阅」打开该源后，再说一次。` };
-    }
+  if (intent === 'rotate_learning') {
     try {
-      const bundle = await getDigestBundle(config, today, { withAI: config.digests?.ai_summary !== false });
-      const sec = (bundle.sections || []).find((s) => s.id === intent);
-      if (!sec?.pushItems?.length) {
-        return { text: `「${labels[intent]}」暂无内容（抓取失败或为空）。可稍后再试，或在订阅页看预览。` };
-      }
-      const title = `${brand} · ${sec.title}`;
-      const { createMarkdownDocument, shortenDigestMarkdown } = require('./feishu-doc');
-      const fullMd = (sec.pushItems || [])
-        .map((i) => i.fullMarkdown || i.message || '')
-        .filter(Boolean)
-        .join('\n\n---\n\n');
-      let docUrl = null;
-      if (fullMd && feishuBot.botConfigured()) {
-        const chatId = (await loadConfig()).feishu?.chat_id;
-        const doc = await createMarkdownDocument({
-          title: `${title} · ${today}`,
-          markdown: fullMd,
-          folderToken: process.env.FEISHU_DOC_FOLDER_TOKEN || '',
-          chatId
-        });
-        if (doc.ok) docUrl = doc.url;
-      }
-      const shortItems = (sec.pushItems || []).map((i) => ({
-        ...i,
-        message: i.shortMessage
-          || shortenDigestMarkdown(i.fullMarkdown || i.message, i.blurb || i.desc)
-      }));
-      const cardBody = buildFeishuCard(today, shortItems, title, appUrl, brand, {
-        docUrl: docUrl || undefined,
-        openLabel: docUrl ? '阅读全文' : undefined
-      });
-      const preview = String(shortItems[0]?.message || '').slice(0, 400)
-        + (docUrl ? `\n\n文档：${docUrl}` : '');
-      return { text: preview, card: cardBody };
+      const rot = await brain.rotateLearningTopics();
+      const pushed = await pushDigestSource('learning', { refresh: true });
+      const tip = `已轮换课题，下一项侧重「${rot.next}」。课题顺序：${rot.topics.join(' → ')}`;
+      if (pushed.card) return { text: `${tip}\n\n${pushed.text || ''}`, card: pushed.card };
+      return { text: `${tip}\n${pushed.text || ''}` };
     } catch (e) {
-      return { text: `拉取「${labels[intent]}」失败：${e.message}` };
+      return { text: `换学习资料失败：${e.message}` };
     }
+  }
+
+  if (intent === 'refresh_news') return pushDigestSource('news', { refresh: true });
+  if (intent === 'refresh_github') return pushDigestSource('github', { refresh: true });
+
+  if (intent === 'repost_digest') {
+    const source = qaMeta.source || 'news';
+    const labels = { learning: '每日编程', github: 'GitHub 热门', news: '科技快讯' };
+    const pushed = await pushDigestSource(source, { refresh: true });
+    if (pushed.card) {
+      return {
+        text: `已重新推送「${labels[source] || source}」\n\n${pushed.text || ''}`,
+        card: pushed.card
+      };
+    }
+    return { text: pushed.text };
+  }
+
+  if (intent === 'learning' || intent === 'github' || intent === 'news') {
+    return pushDigestSource(intent, { refresh: false });
   }
 
   return { text: '我没太理解。回「帮助」看可用指令。' };

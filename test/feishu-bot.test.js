@@ -95,8 +95,19 @@ describe('feishu bot intents', () => {
     assert.deepEqual(matchQaIntent('科技快讯'), { intent: 'news' });
     assert.deepEqual(matchQaIntent('今天事项'), { intent: 'today' });
     assert.deepEqual(matchQaIntent('经期要注意什么'), { intent: 'period' });
+    assert.deepEqual(matchQaIntent('生日'), { intent: 'birthdays' });
+    assert.deepEqual(matchQaIntent('谁过生日'), { intent: 'birthdays' });
+    assert.deepEqual(matchQaIntent('日程'), { intent: 'upcoming' });
+    assert.deepEqual(matchQaIntent('清单'), { intent: 'inventory' });
+    assert.deepEqual(matchQaIntent('概况'), { intent: 'summary' });
+    assert.deepEqual(matchQaIntent('换学习资料'), { intent: 'rotate_learning' });
+    assert.deepEqual(matchQaIntent('换热点'), { intent: 'refresh_news' });
+    assert.deepEqual(matchQaIntent('重新推送热点'), { intent: 'repost_digest', source: 'news' });
+    assert.deepEqual(matchQaIntent('重新推送 GitHub'), { intent: 'repost_digest', source: 'github' });
     assert.equal(matchQaIntent('随便聊聊天气'), null);
     assert.match(helpText('Nudge'), /今天学什么/);
+    assert.match(helpText('Nudge'), /生日/);
+    assert.match(helpText('Nudge'), /自然语言|换学习资料/);
   });
 
   it('routes qa intent to answerQa handler', async () => {

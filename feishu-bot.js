@@ -161,16 +161,41 @@ function matchBindIntent(text) {
 
 /**
  * 结构化问答意图（优先于通用 DeepSeek）
- * @returns {{ intent: string } | null}
+ * @returns {{ intent: string, source?: string } | null}
  */
 function matchQaIntent(text) {
   const t = String(text || '').trim();
   if (!t) return null;
   if (/^(帮助|help|菜单|能做什么|命令)$/i.test(t)) return { intent: 'help' };
+
+  if (/(重新推送|再推一次|重推|再发一次|再推送)/.test(t)) {
+    let source = null;
+    if (/(编程|学习|课题)/.test(t)) source = 'learning';
+    else if (/(github|开源)/i.test(t)) source = 'github';
+    else if (/(快讯|新闻|热点)/.test(t)) source = 'news';
+    return { intent: 'repost_digest', source };
+  }
+  if (/(换学习|换课题|换资料|换编程|轮换课题)/.test(t)) return { intent: 'rotate_learning' };
+  if (/(换热点|换快讯|刷新快讯|换新闻|刷新热点)/.test(t)) return { intent: 'refresh_news' };
+  if (/(换开源|刷新github|换github|刷新开源)/i.test(t)) return { intent: 'refresh_github' };
+
+  if (/(谁过生日|近期生日|有哪些人.*生日|生日有谁|生日列表|哪些人生日)/.test(t) || /^(生日)$/.test(t)) {
+    return { intent: 'birthdays' };
+  }
+  if (/(即将|日程|这周有什么|未来.*事项|近期提醒|两周内)/.test(t) || /^(日程)$/.test(t)) {
+    return { intent: 'upcoming' };
+  }
+  if (/(清单|有哪些事项|习惯列表|日子列表|待办列表|全部事项)/.test(t) || /^(清单)$/.test(t)) {
+    return { intent: 'inventory' };
+  }
+  if (/(概况|总结一下|今天怎么样|状态如何|项目概况)/.test(t) || /^(概况|总结)$/.test(t)) {
+    return { intent: 'summary' };
+  }
+
   if (/(今天学什么|每日编程|编程知识|今日课题|学什么)/.test(t)) return { intent: 'learning' };
   if (/(github|开源热门|热门仓库|今日开源)/i.test(t)) return { intent: 'github' };
   if (/(科技快讯|今日热点|今日新闻|快讯|今日精选)/.test(t)) return { intent: 'news' };
-  if (/(今天事项|今日事项|今日提醒|有什么事|待办)/.test(t)) return { intent: 'today' };
+  if (/(今天事项|今日事项|今日提醒|有什么事|今日待办|今天待办)/.test(t)) return { intent: 'today' };
   if (/(哄哄她|哄哄|说句好听|安慰一下|说点好听|来句暖)/.test(t)) return { intent: 'comfort' };
   if (/(经期|生理期)/.test(t)) return { intent: 'period' };
   return null;
@@ -198,9 +223,11 @@ async function chatWithDeepSeek(userText, contextNote) {
   const key = process.env.DEEPSEEK_API_KEY;
   if (!key) return { ok: false, text: '还没配置 DEEPSEEK_API_KEY，暂时无法问答。你可以先回复「收到」确认今日事项。' };
   const system = [
-    '你是 Nudge，轻量日常提醒助手。',
-    '回答简洁、口语、有用；中文为主。',
-    '用户在飞书里和你对话；不要提网页助手。',
+    '你是 Nudge，私人轻量提醒与订阅助手，在飞书里对话。',
+    '风格：简洁、口语、有温度；中文为主；不要提「网页助手」或编造不存在的事项。',
+    '下方是实时上下文（待确认、生日、日程、清单、经期、订阅摘要）。优先据此回答。',
+    '用户可用自然语言；若上下文已含答案直接答。缺数据就承认，并提示可说「生日」「清单」等。',
+    '不要假装已经推送了卡片；推送类动作由系统意图路由执行。',
     contextNote || ''
   ].filter(Boolean).join('\n');
   try {
@@ -216,8 +243,8 @@ async function chatWithDeepSeek(userText, contextNote) {
           { role: 'system', content: system },
           { role: 'user', content: userText }
         ],
-        temperature: 0.6,
-        max_tokens: 800
+        temperature: 0.55,
+        max_tokens: 1000
       })
     });
     const json = await res.json();
@@ -291,9 +318,9 @@ async function handleEvent(body, handlers = {}) {
     return { http: 200, json: { ok: true, action: 'ack', ...result } };
   }
 
-  const qa = matchQaIntent(meta.text);
+  const qa = await resolveStructuredIntent(meta.text, handlers);
   if (qa && handlers.answerQa) {
-    const result = await handlers.answerQa(qa.intent, meta.text);
+    const result = await handlers.answerQa(qa.intent, meta.text, qa);
     try {
       if (botConfigured()) {
         if (result?.card) await replyInteractive(meta.messageId, result.card);
@@ -302,10 +329,10 @@ async function handleEvent(body, handlers = {}) {
     } catch (e) {
       return {
         http: 200,
-        json: { ok: true, action: 'qa', intent: qa.intent, reply_error: e.message, text: result?.text }
+        json: { ok: true, action: 'qa', intent: qa.intent, via: qa.via, reply_error: e.message, text: result?.text }
       };
     }
-    return { http: 200, json: { ok: true, action: 'qa', intent: qa.intent, card: !!result?.card } };
+    return { http: 200, json: { ok: true, action: 'qa', intent: qa.intent, via: qa.via || 'exact', card: !!result?.card } };
   }
 
   let contextNote = '';
@@ -326,6 +353,16 @@ async function handleEvent(body, handlers = {}) {
   return { http: 200, json: { ok: true, action: 'chat', deepseek: chat.ok } };
 }
 
+async function resolveStructuredIntent(text, handlers = {}) {
+  const { resolveQaIntent } = require('./lib/feishu-intent-router');
+  if (handlers.resolveQaIntent) {
+    return handlers.resolveQaIntent(text);
+  }
+  return resolveQaIntent(text, matchQaIntent, {
+    useLlm: handlers.useLlmRoute !== false
+  });
+}
+
 module.exports = {
   botConfigured,
   getTenantAccessToken,
@@ -340,5 +377,6 @@ module.exports = {
   extractChatId,
   chatWithDeepSeek,
   handleEvent,
-  extractMessageMeta
+  extractMessageMeta,
+  resolveStructuredIntent
 };
