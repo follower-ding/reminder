@@ -1851,7 +1851,7 @@ function eventFormHTML(ev, spaceHint) {
       <div id="fields-birthday" class="${space === "moment" && subtype === "birthday" ? "" : "hidden"}">
         <div class="form-group">
           <label>出生日期（阳历）</label>
-          <input name="birth_date" type="date" required value="${birthdayBirthDateValue(ev)}" max="2100-12-31">
+          <input name="birth_date" type="date" value="${birthdayBirthDateValue(ev)}" max="2100-12-31">
         </div>
         <div id="bday-preview" class="bday-preview" aria-live="polite"></div>
         <p class="form-hint cal-hint">只需填出生阳历年月日。系统会换算农历并按农历过生日（每年阳历会变，例如 2000-11-27＝冬月初二 → 2026 是 12月10日）。</p>
@@ -1919,10 +1919,13 @@ function setupEventForm(modal, ev, spaceHint) {
     const st = subtype || modal.querySelector("#field-subtype")?.value || "birthday";
     if (modal.querySelector("#field-subtype")) modal.querySelector("#field-subtype").value = st;
     modal.querySelectorAll("[data-subtype]").forEach((c) => c.classList.toggle("active", c.dataset.subtype === st));
-    modal.querySelector("#fields-birthday").classList.toggle("hidden", !(space === "moment" && st === "birthday"));
+    const showBirthday = space === "moment" && st === "birthday";
+    modal.querySelector("#fields-birthday").classList.toggle("hidden", !showBirthday);
     modal.querySelector("#fields-period").classList.toggle("hidden", !(space === "moment" && st === "period"));
     modal.querySelector("#fields-anni").classList.toggle("hidden", !(space === "moment" && st === "anniversary"));
     modal.querySelector("#fields-habit").classList.toggle("hidden", !(space === "habit" || space === "task"));
+    // display:none 不会跳过 HTML5 required；隐藏时必须关掉，否则纪念日/经期/习惯创建会「点了没反应」
+    if (form.birth_date) form.birth_date.required = showBirthday;
   };
 
   modal.querySelectorAll("[data-set-space]").forEach((c) => {
