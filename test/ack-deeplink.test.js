@@ -1,9 +1,13 @@
 /**
  * 飞书确认深链 HMAC、待办归档、撤销确认
+ * HTTP 用例使用独立 DATA_DIR + TOKEN_SECRET，避免与并行测试抢共享 store。
  */
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 const {
   createAckSig,
   verifyAckSig,
@@ -16,9 +20,30 @@ const {
   migrateEvent
 } = require('../engine');
 
+const ACK_SECRET = 'ack-deeplink-test-secret';
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'reminder-ack-'));
+process.env.DATA_DIR = tmp;
+process.env.TOKEN_SECRET = ACK_SECRET;
+delete process.env.VERCEL;
+delete process.env.DATABASE_URL;
+delete process.env.POSTGRES_URL;
+
+fs.writeFileSync(path.join(tmp, 'data.json'), JSON.stringify({ events: [], history: [], push_ledger: [] }));
+fs.writeFileSync(path.join(tmp, 'config.json'), JSON.stringify({
+  timezone: 'Asia/Shanghai',
+  users: { admin: { password: 'admin123', label: '管理员' } },
+  feishu: { enabled: false },
+  serverchan: { enabled: false }
+}));
+
+delete require.cache[require.resolve('../store')];
+delete require.cache[require.resolve('../middleware/auth')];
+delete require.cache[require.resolve('../server')];
+const store = require('../store');
+store.resetCache();
 const app = require('../server');
 
-function request(server, method, urlPath, { token, body, followRedirects = false } = {}) {
+function request(server, method, urlPath, { token, body } = {}) {
   return new Promise((resolve, reject) => {
     const addr = server.address();
     const opts = {
@@ -120,6 +145,7 @@ describe('ack deeplink + archive + unack', () => {
 
   after(async () => {
     await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(tmp, { recursive: true, force: true });
   });
 
   it('GET /api/ack rejects missing sig and accepts valid sig', async () => {
@@ -133,20 +159,23 @@ describe('ack deeplink + archive + unack', () => {
       }
     });
     assert.equal(created.status, 200);
+    assert.equal(created.body.space, 'task');
     const id = created.body.id;
     const bad = await request(server, 'GET', `/api/ack/${id}/2026-07-27/badsig/feishu`);
     assert.equal(bad.status, 400);
     assert.match(String(bad.body), /确认失败/);
 
     const day = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
-    const sig = createAckSig(id, day);
+    const sig = createAckSig(id, day, ACK_SECRET);
     const pathUrl = `/api/ack/${id}/${day}/${encodeURIComponent(sig)}/feishu`;
     assert.equal(pathUrl.includes('&'), false);
     const ok = await request(server, 'GET', pathUrl);
     assert.equal(ok.status, 200);
-    assert.match(String(ok.body), /已确认并归档|已确认收到/);
+    assert.match(String(ok.body), /已确认并归档/);
 
     const detail = await request(server, 'GET', `/api/events/${id}/detail`, { token });
+    assert.equal(detail.status, 200);
+    assert.equal(detail.body.item.space, 'task');
     assert.equal(detail.body.item.archived, true);
     assert.equal(isAcked(detail.body.item, day), true);
 

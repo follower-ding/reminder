@@ -739,7 +739,7 @@ function buildFeishuCard(dateLabel, items, title, appUrl, brandName, options = {
 }
 
 function buildServerchanBody(dateLabel, items) {
-  const lines = [`### ${dateLabel} 日常提醒`, ''];
+  const lines = [`### ${dateLabel} Nudge`, ''];
   for (const i of items || []) {
     if (i.type === 'period' && i.care) {
       lines.push(formatCareFeishuBlock(i.care).replace(/\*\*/g, '').replace(/_/g, ''));
@@ -748,7 +748,7 @@ function buildServerchanBody(dateLabel, items) {
       lines.push(`- ${i.message}`);
     }
   }
-  lines.push('', '---', '来自「日常提醒」');
+  lines.push('', '---', '来自 Nudge');
   return lines.join('\n');
 }
 

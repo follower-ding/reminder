@@ -612,7 +612,7 @@ app.get('/api/health', async (req, res) => {
     res.json({
       status: 'ok',
       time: dateStr(),
-      version: '4.1.30',
+      version: '4.1.31',
       brand: BRAND.name,
       app_url: APP_URL,
       deepseek: { configured: !!process.env.DEEPSEEK_API_KEY },
@@ -1095,7 +1095,8 @@ if (require.main === module && !process.env.VERCEL) {
       const data = await loadData();
       cachedTimezone = cfg.timezone || cachedTimezone;
       const persist = persistenceInfo();
-      console.log(`✨ Nudge v4.0 已启动`);
+      const APP_VERSION = require('./package.json').version;
+      console.log(`✨ Nudge v${APP_VERSION} 已启动`);
       console.log(`   📍 http://0.0.0.0:${PORT}`);
       console.log(`   ⏰ 时区: ${cachedTimezone}`);
       console.log(`   📊 事件数: ${data.events.length}`);
@@ -1105,7 +1106,8 @@ if (require.main === module && !process.env.VERCEL) {
       }
       console.log(`   ⏱️  本地调度: 每 60s 扫描到期事项（飞书需在设置中启用）`);
     } catch (e) {
-      console.log(`✨ Nudge v4.0 已启动`);
+      const APP_VERSION = require('./package.json').version;
+      console.log(`✨ Nudge v${APP_VERSION} 已启动`);
       console.log(`   📍 http://0.0.0.0:${PORT}`);
       console.log(`   ⚠️  存储初始化: ${e.message}`);
     }

@@ -1,119 +1,61 @@
-# ☀️ 日常提醒系统
+# Nudge
 
-轻量级、可自托管的提醒服务平台，支持生日、纪念日、经期、吃药、缴费、健康习惯等 9 种提醒类型，集成飞书机器人和 Server酱 微信推送。
+**轻推一下，刚好想起** — 私人提醒助手：习惯 / 日子 / 待办 + 热点订阅，到点推飞书卡片，可在飞书确认与问答。
+
+> 当前版本 **v4.1.31** · 仓库：https://github.com/follower-ding/reminder
 
 ## 特性
 
-- **9 种提醒类型**: 生日、纪念日、经期、吃药、缴费、健康、节日、体检、自定义
-- **灵活调度**: 每天、每周、每月、每年、周期（经期）
-- **多渠道推送**: 飞书机器人卡片、Server酱 微信通知
-- **移动端适配**: PWA 支持添加到主屏幕、离线缓存
-- **一键部署**: 支持 Zeabur / Railway / Render / VPS
-- **智能推荐**: 自动分析经期、生日、缴费等场景给出建议
+- **三空间清单**：习惯（重复）· 日子（生日 / 经期 / 纪念日）· 待办（临时）
+- **可信调度**：分钟窗口 + `push_ledger` 防重；创建/保存不自动推送
+- **飞书**：应用机器人长连接、事项/热点分通道、「已收到」回调、结构化问答
+- **陪伴向**：农历生日、经期关怀、哄哄她、习惯 streak、时间胶囊
+- **订阅**：可配置 RSS / 编程主题；短卡 + 飞书文档全文
+- **客户端**：PWA；可选安卓 Capacitor 壳（见 [docs/ANDROID.md](docs/ANDROID.md)）
 
 ## 快速开始
-
-### 本地运行
 
 ```bash
 npm install
 node server.js
-# 访问 http://localhost:3333
+# http://localhost:3333
 # 默认登录: admin / admin123
-# 本地默认用项目目录下 data.json / config.json（无需数据库）
+# 本地默认写项目目录 data.json / config.json
 ```
 
-### Vercel 生产（必须配数据库）
+生产（VPS）建议：
 
-Vercel Serverless 的 `/tmp` **不能**跨实例持久化。生产环境请配置 Postgres：
+1. 配置环境变量：`TOKEN_SECRET`、`FEISHU_APP_ID` / `FEISHU_APP_SECRET`、`APP_URL`、可选 `DEEPSEEK_API_KEY` / `DATABASE_URL`
+2. `pm2 start server.js --name nudge`
+3. 飞书长连接：`pm2 start "npm run feishu:ws" --name reminder-feishu-ws`
+4. **不要**再单独 cron `node reminder.js`（旧脚本无 ledger，易重复推送；调度已由 `server.js` 每 60s 扫描）
 
-1. 创建免费库：[Neon](https://neon.tech) 或 Vercel Storage → Postgres
-2. 在 Vercel 项目 → Settings → Environment Variables 添加：
-   - `DATABASE_URL` = `postgresql://...`（Neon 连接串）
-3. （可选）在库里执行 `sql/schema.sql`；应用首次读写也会自动建表
-4. Redeploy 后打开「设置」页，应显示 `存储后端: postgres · 持久化正常`
+可选：`GET /api/cron/check` 作外部兜底；Hobby Vercel 仍须 Postgres（`DATABASE_URL`）。
 
-未配置 `DATABASE_URL` 时，删除事件 / 飞书设置会在刷新后丢失或恢复成种子数据。
+## 页面
 
-### 配置推送
+| Tab | 用途 |
+|-----|------|
+| 今日 | 待确认 / 已完成、关怀与即将到来 |
+| 清单 | 习惯 · 日子 · 待办 + 详情 |
+| 订阅 | Digest 源与时刻 |
+| 设置 | 飞书绑定、联调、检查更新 |
 
-登录 Web 界面后，在「设置」页面配置：
+## 文档
 
-1. **飞书**: 填写 Webhook URL（群机器人 → 添加机器人 → 复制 Webhook）
-2. **Server酱**: 填写 SendKey（https://sct.ftqq.com 注册获取）
+| 文档 | 说明 |
+|------|------|
+| [nudge-PRD.md](nudge-PRD.md) | 产品进度 |
+| [RELEASE.md](RELEASE.md) | 发版记录 |
+| [docs/superpowers/plans/2026-07-29-nudge-v4.2-roadmap.md](docs/superpowers/plans/2026-07-29-nudge-v4.2-roadmap.md) | v4.2 开发计划 |
+| [docs/ANDROID.md](docs/ANDROID.md) | 安卓壳 |
 
-### 定时推送
+## 测试
 
 ```bash
-# 手动执行检查
-node reminder.js
-
-# 配置 crontab（每天 9:00, 14:00, 21:00）
-0 9,14,21 * * * cd /opt/reminder && node reminder.js >> /var/log/reminder.log 2>&1
-
-# 或使用 PM2
-pm2 start reminder.js --name reminder-check --cron "0 9,14,21 * * *"
+npm test
 ```
-
-## 部署
-
-| 平台 | 说明 |
-|------|------|
-| **Vercel** | 必须设置 `DATABASE_URL`（Neon/Postgres），否则数据不持久 |
-| **Zeabur** | 导入 GitHub 仓库，启动命令 `node server.js`（可用本地文件或同样配 DB） |
-| **Railway** | 连接仓库，自动检测；建议附加 Postgres 插件并注入 `DATABASE_URL` |
-| **Render** | New Web Service → Start Command `node server.js` |
-| **VPS** | `pm2 start server.js --name reminder`（默认写本地 JSON） |
-| **安卓 APK** | Capacitor 壳，见 [docs/ANDROID.md](docs/ANDROID.md) |
-
-## 项目结构
-
-```
-reminder/
-├── server.js              # Web 服务器 + 全部 API
-├── store.js               # 持久化层（Postgres / 本地文件）
-├── reminder.js            # 定时推送脚本
-├── seed.data.json         # 初始事件种子
-├── sql/schema.sql         # Postgres 建表
-├── package.json
-├── public/
-│   ├── index.html
-│   ├── app.js
-│   ├── manifest.json
-│   └── sw.js
-└── api/index.js           # Vercel serverless 入口
-```
-
-## API 文档
-
-认证方式: `Authorization: Bearer <token>`
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/login` | 登录获取 Token |
-| GET | `/api/events` | 获取所有事件 |
-| POST | `/api/events` | 创建事件 |
-| PUT | `/api/events/:id` | 更新事件 |
-| DELETE | `/api/events/:id` | 删除事件 |
-| GET | `/api/check` | 今日提醒检查 |
-| GET | `/api/dashboard` | 首页数据 |
-| GET | `/api/stats` | 统计分析 |
-| GET | `/api/recommend` | 智能推荐 |
-| GET | `/api/history` | 操作历史 |
-| PUT | `/api/config` | 更新配置 |
-| POST | `/api/feishu/test` | 测试飞书推送 |
-| POST | `/api/serverchan/test` | 测试 Server酱 |
-
-## 安全
-
-- `config.json` 和 `data.json` 已加入 `.gitignore`，不会提交到仓库
-- 默认用户 admin，请及时修改密码
-- 建议定期备份 `data.json`
 
 ## License
 
 MIT
-
----
-
-> **版本:** v3.0 | **源码:** https://github.com/follower-ding/reminder

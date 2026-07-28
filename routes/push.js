@@ -63,8 +63,8 @@ router.post('/serverchan/test', asyncHandler(async (req, res) => {
   }
   const result = await push.sendServerchan(
     config,
-    '🔔 提醒系统测试',
-    '这是一条来自日常提醒系统的测试消息\n\n如果收到这条消息，说明配置正确 ✅'
+    '🔔 【连通性测试】Nudge',
+    '这是一条来自 Nudge 的测试消息\n\n如果收到这条消息，说明配置正确 ✅'
   );
   res.json(result);
 }));
