@@ -42,7 +42,7 @@ function syncTypeFromSpace(out) {
   } else {
     out.type = 'custom';
     if (out.space === 'habit' && !out.schedule.mode) out.schedule.mode = 'daily';
-    if (out.space === 'task' && !out.schedule.mode) out.schedule.mode = 'daily';
+    if (out.space === 'task' && !out.schedule.mode) out.schedule.mode = 'once';
   }
   return out;
 }
@@ -345,7 +345,7 @@ function checkEvent(ev, n) {
   const msg = e.messages || {};
   const meta = TYPE_META[e.type] || TYPE_META.custom;
 
-  if (mode === 'daily') {
+  if (mode === 'daily' || mode === 'once') {
     return {
       active: true,
       message: msg.default || `⏰ ${e.name}`,
@@ -358,9 +358,9 @@ function checkEvent(ev, n) {
   }
 
   if (mode === 'weekly') {
-    const dayOfWeek = sched.day_of_week;
+    const dayOfWeek = Number(sched.day_of_week);
     const dow = new Date(n.year, n.month - 1, n.day).getDay();
-    if (dayOfWeek !== undefined && dow === dayOfWeek) {
+    if (Number.isFinite(dayOfWeek) && dow === dayOfWeek) {
       return {
         active: true,
         message: msg.default || `📅 ${e.name}`,
@@ -776,7 +776,10 @@ function normalizeEventInput(body) {
   if (space === 'moment' && subtype === 'period') schedule.mode = 'cycle';
   if (space === 'moment' && subtype === 'anniversary') schedule.mode = schedule.mode || 'yearly';
   if (space === 'habit' && !schedule.mode) schedule.mode = 'daily';
-  if (space === 'task' && !schedule.mode) schedule.mode = 'daily';
+  if (space === 'task' && !schedule.mode) schedule.mode = 'once';
+  if (schedule.day_of_week != null && schedule.day_of_week !== '') {
+    schedule.day_of_week = Number(schedule.day_of_week);
+  }
   if (schedule.time) {
     const t = parseHHMM(String(schedule.time));
     schedule.time = t ? `${String(t.hour).padStart(2, '0')}:${String(t.minute).padStart(2, '0')}` : undefined;

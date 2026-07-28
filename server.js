@@ -93,6 +93,26 @@ function dateStr(date) {
   const d = now(date);
   return `${d.year}-${String(d.month).padStart(2,'0')}-${String(d.day).padStart(2,'0')}`;
 }
+
+/** 创建/更新时校验 schedule，避免「建了永远不响」 */
+function validateEventSchedule(ev) {
+  const space = ev?.space;
+  const subtype = ev?.subtype;
+  const s = ev?.schedule || {};
+  if (space === 'moment' && subtype === 'period' && !s.last_start) {
+    return '请填写上次开始日期';
+  }
+  if (space === 'moment' && subtype === 'anniversary') {
+    if (!s.month || !s.day) return '请填写纪念日日期';
+  }
+  if (space === 'moment' && subtype === 'birthday') {
+    if (!s.month || !s.day) return '请填写出生日期';
+  }
+  if (s.mode === 'weekly' && (s.day_of_week == null || s.day_of_week === '')) {
+    return '请选择星期几';
+  }
+  return null;
+}
 function daysBetween(a, b) {
   return Math.floor((new Date(a.year, a.month-1, a.day) - new Date(b.year, b.month-1, b.day)) / 86400000);
 }
@@ -239,6 +259,8 @@ app.post('/api/events', async (req, res) => {
     const data = await loadData();
     const normalized = normalizeEventInput(req.body || {});
     if (!normalized.name) return res.status(400).json({ error: 'name 必填' });
+    const err = validateEventSchedule(normalized);
+    if (err) return res.status(400).json({ error: err });
     const ev = { id: nextId(data.events), ...normalized };
     data.events.push(ev);
     data.history.push({ id: nextId(data.history), eventId: ev.id, action: 'create', detail: `${ev.type}:${ev.name}`, date: dateStr(), ts: Date.now() });
@@ -256,6 +278,8 @@ app.put('/api/events/:id', async (req, res) => {
     if (idx === -1) return res.status(404).json({ error: '未找到' });
     const merged = { ...data.events[idx], ...req.body, id: data.events[idx].id };
     const normalized = normalizeEventInput(merged);
+    const err = validateEventSchedule(normalized);
+    if (err) return res.status(400).json({ error: err });
     const archived = merged.archived === true || merged.archived === 1;
     data.events[idx] = {
       ...merged,
@@ -612,7 +636,7 @@ app.get('/api/health', async (req, res) => {
     res.json({
       status: 'ok',
       time: dateStr(),
-      version: '4.1.31',
+      version: '4.2.0',
       brand: BRAND.name,
       app_url: APP_URL,
       deepseek: { configured: !!process.env.DEEPSEEK_API_KEY },

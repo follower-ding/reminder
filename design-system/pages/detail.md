@@ -7,6 +7,8 @@
 - Do NOT put actions in a separate card below the hero
 - Push history remains a secondary card under the hero
 - Period forecast stays below hero when type is period
+- **Mobile:** countdown stacks above date rows; header back button (not in-page back link)
+- **Dates:** always `YYYY-MM-DD` (+ optional `· 周X`); never mix `1993/05/16` with `5月1日 2027`
 
 ## Hierarchy
 1. Countdown (dominant visual — ring + large number)

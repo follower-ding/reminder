@@ -2,7 +2,7 @@
 
 **轻推一下，刚好想起** — 私人提醒助手：习惯 / 日子 / 待办 + 热点订阅，到点推飞书卡片，可在飞书确认与问答。
 
-> 当前版本 **v4.1.31** · 仓库：https://github.com/follower-ding/reminder
+> 当前版本 **v4.2.0** · 仓库：https://github.com/follower-ding/reminder
 
 ## 特性
 

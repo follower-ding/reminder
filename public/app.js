@@ -198,6 +198,20 @@ function toYMD(date) {
   const d = date instanceof Date ? date : new Date(date);
   return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
 }
+/** 统一展示：YYYY-MM-DD · 周X */
+function formatDateDisplay(date, { withWeek = true } = {}) {
+  const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return "—";
+  const ymd = toYMD(d);
+  if (!withWeek) return ymd;
+  const wd = ["日", "一", "二", "三", "四", "五", "六"][d.getDay()];
+  return ymd + " · 周" + wd;
+}
+function parseYmdToDate(ymd) {
+  const m = String(ymd || "").match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!m) return null;
+  return new Date(+m[1], +m[2] - 1, +m[3], 12);
+}
 /** Birthday form value: prefer stored birth_solar, else reconstruct from lunar/solar fields. */
 function birthdayBirthDateValue(ev) {
   if (ev?.birth_solar && /^\d{4}-\d{2}-\d{2}$/.test(ev.birth_solar)) return ev.birth_solar;
@@ -308,15 +322,89 @@ function sortPendingItems(list) {
     return String(a.time || "99:99").localeCompare(String(b.time || "99:99"));
   });
 }
-function closeModal() { document.querySelectorAll(".modal-overlay").forEach((m) => m.remove()); }
-function openModal(html, center = true) {
-  closeModal();
+function closeModal(opts = {}) {
+  const had = !!document.querySelector(".modal-overlay");
+  document.querySelectorAll(".modal-overlay").forEach((m) => m.remove());
+  if (had && !opts.fromPop && history.state && history.state.nudge === "modal") {
+    navSilent = true;
+    history.back();
+  }
+  syncChrome();
+}
+function openModal(html, center = false) {
+  closeModal({ fromPop: true });
   const o = document.createElement("div");
-  o.className = "modal-overlay" + (center ? " center" : "");
-  o.innerHTML = `<div class="modal-content">${html}</div>`;
-  o.addEventListener("click", (e) => { if (e.target === o) o.remove(); });
+  o.className = "modal-overlay" + (center ? " center" : " sheet");
+  o.innerHTML = `<div class="modal-content"><div class="modal-grab" aria-hidden="true"></div>${html}</div>`;
+  o.addEventListener("click", (e) => { if (e.target === o) closeModal(); });
   document.body.appendChild(o);
+  history.pushState({ nudge: "modal" }, "");
+  syncChrome();
   return o.querySelector(".modal-content");
+}
+
+let navSilent = false;
+function syncChrome() {
+  const back = document.getElementById("nav-back");
+  const brand = document.getElementById("brand-block");
+  const hasModal = !!document.querySelector(".modal-overlay");
+  const onDetail = currentView === "detail";
+  const showBack = hasModal || onDetail;
+  if (back) back.classList.toggle("hidden", !showBack);
+  if (brand) brand.classList.toggle("compact", showBack);
+  document.body.classList.toggle("has-overlay", hasModal);
+}
+function goBackInApp() {
+  if (document.querySelector(".modal-overlay")) {
+    closeModal();
+    return true;
+  }
+  if (currentView === "detail") {
+    if (history.state && history.state.nudge === "detail") {
+      navSilent = true;
+      history.back();
+    }
+    detailId = null;
+    renderView("events");
+    syncChrome();
+    return true;
+  }
+  return false;
+}
+function setupNavigation() {
+  window.addEventListener("popstate", () => {
+    if (navSilent) {
+      navSilent = false;
+      syncChrome();
+      return;
+    }
+    if (document.querySelector(".modal-overlay")) {
+      document.querySelectorAll(".modal-overlay").forEach((m) => m.remove());
+      syncChrome();
+      return;
+    }
+    if (currentView === "detail") {
+      detailId = null;
+      renderView("events");
+      syncChrome();
+    }
+  });
+  const backBtn = document.getElementById("nav-back");
+  if (backBtn) backBtn.onclick = () => goBackInApp();
+  // Capacitor / Android：有历史时先退应用内；根页不主动 exitApp
+  try {
+    const CapApp = window.Capacitor?.Plugins?.App;
+    if (CapApp?.addListener) {
+      CapApp.addListener("backButton", () => {
+        if (goBackInApp()) return;
+        if (history.state && history.state.nudge) {
+          history.back();
+          return;
+        }
+        // 停留在今日/清单，避免一按就退出
+      });
+    }
+  } catch (_) { /* ignore */ }
 }
 function scheduleMeta(ev) {
   const s = ev.schedule || {};
@@ -442,7 +530,6 @@ function countdownHeroHTML(ev, check, forecastDays, forecast) {
     dateBlock = `<p class="detail-next">经期中 · 第 ${esc(String(forecast.day_in_cycle))} / ${esc(String(periodLen))} 天</p>
       <p class="detail-next-note">这几天会每天推送关怀内容</p>`;
   } else if (next && ev.schedule?.mode === "yearly" && (next.solarText || next.lunarText)) {
-    const wd = ["日","一","二","三","四","五","六"][next.date.getDay()];
     if (next.isLunar) {
       let birthSolarRow = "";
       const birthYmd = birthdayBirthDateValue(ev);
@@ -451,7 +538,7 @@ function countdownHeroHTML(ev, check, forecastDays, forecast) {
         <div class="cal-row">
           <span class="cal-ico">${iconSvg("sun")}</span>
           <span class="cal-k">出生阳历</span>
-          <span class="cal-v">${esc(birthYmd.replace(/-/g, "/"))}</span>
+          <span class="cal-v mono">${esc(birthYmd)}</span>
         </div>`;
       }
       dateBlock = `
@@ -459,16 +546,16 @@ function countdownHeroHTML(ev, check, forecastDays, forecast) {
         <div class="cal-row">
           <span class="cal-ico">${iconSvg("moon")}</span>
           <span class="cal-k">农历生日</span>
-          <span class="cal-v">${esc(next.lunarText)}（每年固定）</span>
+          <span class="cal-v">${esc(next.lunarText)} · 每年固定</span>
         </div>
         ${birthSolarRow}
         <div class="cal-row highlight">
           <span class="cal-ico">${iconSvg("sun")}</span>
           <span class="cal-k">下次阳历</span>
-          <span class="cal-v">${esc(next.solarText)} · ${esc(String(next.date.getFullYear()))} · 周${wd}</span>
+          <span class="cal-v mono">${esc(formatDateDisplay(next.date))}</span>
         </div>
       </div>
-      <p class="detail-next-note">按农历过生日：农历固定，每年阳历会变（如 2026 冬月初二＝12月10日）</p>`;
+      <p class="detail-next-note">按农历过：农历月日固定，每年阳历会变</p>`;
     } else {
       let birthLunarRow = "";
       if (ev.birth_year && ev.schedule?.month && ev.schedule?.day) {
@@ -488,16 +575,16 @@ function countdownHeroHTML(ev, check, forecastDays, forecast) {
         <div class="cal-row">
           <span class="cal-ico">${iconSvg("sun")}</span>
           <span class="cal-k">阳历生日</span>
-          <span class="cal-v">${esc(next.solarText)}（每年固定）</span>
+          <span class="cal-v mono">${esc(formatDateDisplay(next.date, { withWeek: false }))} · 每年固定</span>
         </div>
         ${birthLunarRow}
         <div class="cal-row">
           <span class="cal-ico">${iconSvg("moon")}</span>
-          <span class="cal-k">下次对应农历</span>
+          <span class="cal-k">下次农历</span>
           <span class="cal-v">${esc(next.lunarText || "—")} · ${esc(String(next.date.getFullYear()))}</span>
         </div>
       </div>
-      <p class="detail-next-note">当前按阳历每年同日提醒。可一键改为按农历过（推荐）</p>
+      <p class="detail-next-note">当前按阳历每年同日。可改为按农历过（推荐）</p>
       <button class="btn-action is-primary btn-migrate-lunar" id="migrate-lunar" type="button">改为按农历过</button>`;
     }
   }
@@ -551,7 +638,7 @@ function yearCalendarRows(ev, years = 8) {
     rows.push({
       year: y,
       solar,
-      solarLabel: formatSolarMD(solar) + " 周" + wd,
+      solarLabel: formatDateDisplay(solar),
       lunarLabel,
       month: solar.getMonth() + 1,
       past,
@@ -876,11 +963,15 @@ function renderView(view) {
   else if (view === "detail") renderDetail(el, detailId);
   else if (view === "subscribe") renderSubscribe(el);
   else if (view === "settings") renderSettings(el);
+  syncChrome();
 }
 
 function openDetail(id) {
   if (!id) return;
   detailId = id;
+  if (!(history.state && history.state.nudge === "detail" && history.state.id === id)) {
+    history.pushState({ nudge: "detail", id }, "");
+  }
   renderView("detail");
 }
 
@@ -1383,12 +1474,10 @@ async function renderDetail(el, id) {
   const titleIcon = isBday ? "cake" : ev.type === "period" ? "heart" : space === "task" ? "calendar" : "clock";
   el.innerHTML = `
     <div class="detail-page">
-      <button class="btn-secondary btn-small detail-back" id="back-events" type="button">← 返回清单</button>
       <article class="detail-hero ${esc(ev.type)} space-${space}${inPeriod ? " is-in-period" : ""}">
-        <div class="hero-sparkles" aria-hidden="true"></div>
         <div class="detail-hero-top">
           <div class="detail-identity">
-            <div class="eyebrow">${SPACE_META[space].label}${ev.subtype ? " · " + esc(ev.subtype) : ""}</div>
+            <div class="eyebrow">${SPACE_META[space].label}${ev.subtype ? " · " + esc(({ birthday: "生日", period: "经期", anniversary: "纪念日" })[ev.subtype] || ev.subtype) : ""}</div>
             <h2 class="detail-title"><span class="title-ico" aria-hidden="true">${iconSvg(titleIcon)}</span>${esc(ev.name)}</h2>
             <p class="detail-meta">${esc(metaBits.join(" · "))}</p>
           </div>
@@ -1423,7 +1512,7 @@ async function renderDetail(el, id) {
       </div>
     </div>
   `;
-  document.getElementById("back-events").onclick = () => renderView("events");
+  syncChrome();
   document.getElementById("edit-item").onclick = () => showEventForm(ev.id);
   const moreBtn = document.getElementById("more-actions");
   const morePanel = document.getElementById("detail-more");
@@ -1496,7 +1585,13 @@ async function renderDetail(el, id) {
     if (!confirm("确定删除？")) return;
     await api("/events/" + ev.id, { method: "DELETE" });
     toast("已删除");
+    detailId = null;
+    if (history.state?.nudge === "detail") {
+      navSilent = true;
+      history.back();
+    }
     renderView("events");
+    syncChrome();
   };
   const pl = document.getElementById("period-log");
   if (pl) pl.onclick = async () => {
@@ -1818,7 +1913,7 @@ function showEventForm(id, spaceHint) {
     const editId = Number.isFinite(id) ? id : null;
     const events = editId != null ? await api("/events") : [];
     const ev = editId != null && Array.isArray(events) ? events.find((e) => e.id === editId) : null;
-    const modal = openModal(eventFormHTML(ev, spaceHint || createSpaceHint), true);
+    const modal = openModal(eventFormHTML(ev, spaceHint || createSpaceHint), false);
     setupEventForm(modal, ev, spaceHint || createSpaceHint);
   })();
 }
@@ -1828,15 +1923,20 @@ function eventFormHTML(ev, spaceHint) {
   const subtype = ev?.subtype || (ev?.type === "period" ? "period" : ev?.type === "birthday" ? "birthday" : "anniversary");
   const s = ev?.schedule || {};
   const m = ev?.messages || {};
-  const mode = s.mode || (space === "habit" ? "daily" : space === "task" ? "daily" : "yearly");
+  const defaultMode = space === "task" ? "once" : (space === "habit" ? "daily" : "yearly");
+  const mode = s.mode || defaultMode;
+  const anniYmd = (s.month && s.day)
+    ? `${new Date().getFullYear()}-${pad2(s.month)}-${pad2(s.day)}`
+    : "";
+  const dow = s.day_of_week != null ? Number(s.day_of_week) : 1;
   return `
-    <div class="modal-header"><h2>${ev ? "编辑" : "新增" + SPACE_META[space].label}</h2><button class="modal-close" type="button">✕</button></div>
+    <div class="modal-header"><h2>${ev ? "编辑" : "新增" + SPACE_META[space].label}</h2><button class="modal-close" type="button" aria-label="关闭">✕</button></div>
     <form id="event-form">
       <input type="hidden" name="space" id="field-space" value="${space}">
       ${!ev ? `
       <div class="segment compact" id="space-seg">
         ${["habit", "moment", "task"].map((k) => `<button type="button" class="seg ${space === k ? "active" : ""}" data-set-space="${k}">${SPACE_META[k].label}</button>`).join("")}
-      </div>` : `<p class="form-hint" style="margin-bottom:.8rem">${SPACE_META[space].label}</p>`}
+      </div>` : `<p class="form-hint space-lock">${SPACE_META[space].label}</p>`}
       <div id="moment-sub" class="${space === "moment" ? "" : "hidden"}">
         <div class="segment compact">
           ${["birthday", "period", "anniversary"].map((k) => `
@@ -1847,14 +1947,14 @@ function eventFormHTML(ev, spaceHint) {
       <div id="tpl-wrap" class="${space === "habit" ? "" : "hidden"}">
         <div class="template-row" id="template-row">${HABIT_TEMPLATES.map((t) => `<button type="button" data-tpl="${t.id}">${t.label}</button>`).join("")}</div>
       </div>
-      <div class="form-group"><label>名称</label><input name="name" required value="${esc(ev?.name || "")}"></div>
+      <div class="form-group"><label>名称</label><input name="name" required value="${esc(ev?.name || "")}" placeholder="怎么称呼这件事"></div>
       <div id="fields-birthday" class="${space === "moment" && subtype === "birthday" ? "" : "hidden"}">
         <div class="form-group">
           <label>出生日期（阳历）</label>
           <input name="birth_date" type="date" value="${birthdayBirthDateValue(ev)}" max="2100-12-31">
         </div>
         <div id="bday-preview" class="bday-preview" aria-live="polite"></div>
-        <p class="form-hint cal-hint">只需填出生阳历年月日。系统会换算农历并按农历过生日（每年阳历会变，例如 2000-11-27＝冬月初二 → 2026 是 12月10日）。</p>
+        <p class="form-hint cal-hint">填阳历出生日期，系统换算农历并按农历过生日。</p>
         <div class="form-row">
           <div class="form-group"><label>提前（天）</label><input name="remind_ahead" type="number" min="0" value="${ev?.remind_ahead ?? 3}"></div>
           <div class="form-group"><label>推送时刻</label><input name="time" type="time" value="${s.time || "09:00"}"></div>
@@ -1863,39 +1963,41 @@ function eventFormHTML(ev, spaceHint) {
       <div id="fields-period" class="${space === "moment" && subtype === "period" ? "" : "hidden"}">
         <div class="form-group"><label>上次开始</label><input name="last_start" type="date" value="${s.last_start || ""}"></div>
         <div class="form-row">
-          <div class="form-group"><label>周期</label><input name="cycle_length" type="number" value="${s.cycle_length || 28}"></div>
-          <div class="form-group"><label>持续</label><input name="period_length" type="number" value="${s.period_length || 5}"></div>
+          <div class="form-group"><label>周期（天）</label><input name="cycle_length" type="number" value="${s.cycle_length || 28}"></div>
+          <div class="form-group"><label>持续（天）</label><input name="period_length" type="number" value="${s.period_length || 5}"></div>
         </div>
         <div class="form-group"><label>推送时刻</label><input name="time_period" type="time" value="${s.time || "09:00"}"></div>
       </div>
       <div id="fields-anni" class="${space === "moment" && subtype === "anniversary" ? "" : "hidden"}">
-        <div class="form-row">
-          <div class="form-group"><label>月</label><input name="month_a" type="number" value="${s.month || ""}"></div>
-          <div class="form-group"><label>日</label><input name="day_a" type="number" value="${s.day || ""}"></div>
+        <div class="form-group"><label>纪念日日期</label>
+          <input name="anni_date" type="date" value="${anniYmd}">
         </div>
-        <div class="form-row">
-          <div class="form-group"><label>历法</label>
-            <select name="calendar_a">
-              <option value="solar" ${(ev?.calendar || "solar") !== "lunar" ? "selected" : ""}>阳历（公历，每年同日）</option>
-              <option value="lunar" ${ev?.calendar === "lunar" ? "selected" : ""}>农历（阴历，阳历日每年会变）</option>
-            </select>
+        <div class="form-group"><label>历法</label>
+          <div class="cal-seg" role="radiogroup" aria-label="历法">
+            <button type="button" class="cal-opt ${(ev?.calendar || "solar") !== "lunar" ? "active" : ""}" data-cal="solar">阳历 · 每年同日</button>
+            <button type="button" class="cal-opt ${ev?.calendar === "lunar" ? "active" : ""}" data-cal="lunar">农历 · 阳历会变</button>
           </div>
-          <div class="form-group"><label>推送时刻</label><input name="time_anni" type="time" value="${s.time || "09:00"}"></div>
+          <input type="hidden" name="calendar_a" id="field-cal-a" value="${(ev?.calendar || "solar") === "lunar" ? "lunar" : "solar"}">
         </div>
-        <div class="form-group"><label>提醒文案</label><input name="msg_anni" value="${esc(m.default || "")}"></div>
+        <div class="form-group"><label>推送时刻</label><input name="time_anni" type="time" value="${s.time || "09:00"}"></div>
+        <div class="form-group"><label>提醒文案</label><input name="msg_anni" value="${esc(m.default || "")}" placeholder="可选"></div>
       </div>
       <div id="fields-habit" class="${space === "habit" || space === "task" ? "" : "hidden"}">
         <div class="form-row">
           <div class="form-group"><label>频率</label>
-            <select name="mode">${["daily", "weekly", "monthly", "yearly"].map((mo) => `<option value="${mo}" ${mode === mo ? "selected" : ""}>${({ daily: "每天", weekly: "每周", monthly: "每月", yearly: "每年" })[mo]}</option>`).join("")}</select>
+            <select name="mode" id="field-mode">${(space === "task" ? ["once", "daily", "weekly"] : ["daily", "weekly", "monthly", "yearly"]).map((mo) => `<option value="${mo}" ${mode === mo ? "selected" : ""}>${({ once: "仅一次", daily: "每天", weekly: "每周", monthly: "每月", yearly: "每年" })[mo]}</option>`).join("")}</select>
           </div>
           <div class="form-group"><label>推送时刻</label><input name="time_custom" type="time" value="${s.time || "08:00"}"></div>
         </div>
-        <div class="form-row" id="custom-md">
-          <div class="form-group"><label>月</label><input name="month_c" type="number" value="${s.month || ""}"></div>
-          <div class="form-group"><label>日</label><input name="day_c" type="number" value="${s.day || ""}"></div>
+        <div class="form-group hidden" id="weekly-dow">
+          <label>星期几</label>
+          <select name="day_of_week">${[0,1,2,3,4,5,6].map((d) => `<option value="${d}" ${dow === d ? "selected" : ""}>${["周日","周一","周二","周三","周四","周五","周六"][d]}</option>`).join("")}</select>
         </div>
-        <div class="form-group"><label>提醒文案</label><input name="msg_default" value="${esc(m.default || m.today || "")}"></div>
+        <div class="form-row hidden" id="custom-md">
+          <div class="form-group"><label>月</label><input name="month_c" type="number" min="1" max="12" value="${s.month || ""}"></div>
+          <div class="form-group"><label>日</label><input name="day_c" type="number" min="1" max="31" value="${s.day || ""}"></div>
+        </div>
+        <div class="form-group"><label>提醒文案</label><input name="msg_default" value="${esc(m.default || m.today || "")}" placeholder="可选"></div>
       </div>
       <p class="form-hint">创建后不会立刻推送；到点自动推（需启用飞书）。</p>
       <div class="form-actions">
@@ -1908,8 +2010,8 @@ function eventFormHTML(ev, spaceHint) {
 function setupEventForm(modal, ev, spaceHint) {
   const form = modal.querySelector("#event-form");
   const spaceInput = modal.querySelector("#field-space");
-  modal.querySelector(".modal-close").onclick = closeModal;
-  modal.querySelector("#cancel-form").onclick = closeModal;
+  modal.querySelector(".modal-close").onclick = () => closeModal();
+  modal.querySelector("#cancel-form").onclick = () => closeModal();
 
   const syncSpaceUI = (space, subtype) => {
     spaceInput.value = space;
@@ -1920,12 +2022,35 @@ function setupEventForm(modal, ev, spaceHint) {
     if (modal.querySelector("#field-subtype")) modal.querySelector("#field-subtype").value = st;
     modal.querySelectorAll("[data-subtype]").forEach((c) => c.classList.toggle("active", c.dataset.subtype === st));
     const showBirthday = space === "moment" && st === "birthday";
+    const showPeriod = space === "moment" && st === "period";
+    const showAnni = space === "moment" && st === "anniversary";
+    const showHabit = space === "habit" || space === "task";
     modal.querySelector("#fields-birthday").classList.toggle("hidden", !showBirthday);
-    modal.querySelector("#fields-period").classList.toggle("hidden", !(space === "moment" && st === "period"));
-    modal.querySelector("#fields-anni").classList.toggle("hidden", !(space === "moment" && st === "anniversary"));
-    modal.querySelector("#fields-habit").classList.toggle("hidden", !(space === "habit" || space === "task"));
-    // display:none 不会跳过 HTML5 required；隐藏时必须关掉，否则纪念日/经期/习惯创建会「点了没反应」
+    modal.querySelector("#fields-period").classList.toggle("hidden", !showPeriod);
+    modal.querySelector("#fields-anni").classList.toggle("hidden", !showAnni);
+    modal.querySelector("#fields-habit").classList.toggle("hidden", !showHabit);
     if (form.birth_date) form.birth_date.required = showBirthday;
+    if (form.last_start) form.last_start.required = showPeriod;
+    if (form.anni_date) form.anni_date.required = showAnni;
+    // 切换习惯/待办时刷新频率选项
+    const modeSel = form.mode;
+    if (modeSel && showHabit) {
+      const opts = space === "task"
+        ? [["once", "仅一次"], ["daily", "每天"], ["weekly", "每周"]]
+        : [["daily", "每天"], ["weekly", "每周"], ["monthly", "每月"], ["yearly", "每年"]];
+      const cur = modeSel.value;
+      modeSel.innerHTML = opts.map(([v, l]) => `<option value="${v}">${l}</option>`).join("");
+      modeSel.value = opts.some(([v]) => v === cur) ? cur : opts[0][0];
+    }
+    syncModeExtras();
+  };
+
+  const syncModeExtras = () => {
+    const mode = form.mode?.value;
+    const md = modal.querySelector("#custom-md");
+    const dow = modal.querySelector("#weekly-dow");
+    if (md) md.classList.toggle("hidden", !(mode === "monthly" || mode === "yearly"));
+    if (dow) dow.classList.toggle("hidden", mode !== "weekly");
   };
 
   modal.querySelectorAll("[data-set-space]").forEach((c) => {
@@ -1933,6 +2058,13 @@ function setupEventForm(modal, ev, spaceHint) {
   });
   modal.querySelectorAll("[data-subtype]").forEach((c) => {
     c.addEventListener("click", () => syncSpaceUI("moment", c.dataset.subtype));
+  });
+  modal.querySelectorAll("[data-cal]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      modal.querySelectorAll("[data-cal]").forEach((b) => b.classList.toggle("active", b === btn));
+      const field = modal.querySelector("#field-cal-a");
+      if (field) field.value = btn.dataset.cal;
+    });
   });
   modal.querySelectorAll("#template-row button").forEach((btn) => {
     btn.onclick = () => {
@@ -1943,15 +2075,10 @@ function setupEventForm(modal, ev, spaceHint) {
       form.mode.value = tpl.mode;
       form.time_custom.value = tpl.time;
       form.msg_default.value = tpl.message;
+      syncModeExtras();
     };
   });
-  const syncMd = () => {
-    const mode = form.mode?.value;
-    const md = modal.querySelector("#custom-md");
-    if (md) md.classList.toggle("hidden", !(mode === "monthly" || mode === "yearly"));
-  };
-  form.mode?.addEventListener("change", syncMd);
-  syncMd();
+  form.mode?.addEventListener("change", syncModeExtras);
   syncSpaceUI(spaceInput.value, modal.querySelector("#field-subtype")?.value);
 
   const syncBdayFormHints = () => {
@@ -1971,9 +2098,9 @@ function setupEventForm(modal, ev, spaceHint) {
       if (nextSolar < today) nextSolar = lunarToSolar(parsed.lunar_month, parsed.lunar_day, curY + 1, parsed.lunar_leap);
     }
     const nextBit = nextSolar
-      ? `下次阳历 <strong>${esc(formatSolarMD(nextSolar))}（${nextSolar.getFullYear()}）</strong>`
+      ? `下次 <strong class="mono">${esc(formatDateDisplay(nextSolar))}</strong>`
       : "";
-    preview.innerHTML = `出生阳历 <strong>${esc(parsed.birth_solar)}</strong> → 农历 <strong>${esc(parsed.lunar_label)}</strong>${nextBit ? " · " + nextBit : ""}`;
+    preview.innerHTML = `出生 <strong class="mono">${esc(parsed.birth_solar)}</strong> → 农历 <strong>${esc(parsed.lunar_label)}</strong>${nextBit ? "<br>" + nextBit : ""}`;
   };
   form.birth_date?.addEventListener("input", syncBdayFormHints);
   form.birth_date?.addEventListener("change", syncBdayFormHints);
@@ -2007,11 +2134,15 @@ function setupEventForm(modal, ev, spaceHint) {
         messages: {}
       };
     } else if (space === "moment" && subtype === "period") {
+      if (!fd.get("last_start")) {
+        toast("请填写上次开始日期");
+        return;
+      }
       body = {
         space, subtype, name: fd.get("name"),
         schedule: {
           mode: "cycle",
-          last_start: fd.get("last_start") || undefined,
+          last_start: fd.get("last_start"),
           cycle_length: +fd.get("cycle_length") || 28,
           period_length: +fd.get("period_length") || 5,
           time: fd.get("time_period") || "09:00",
@@ -2020,20 +2151,36 @@ function setupEventForm(modal, ev, spaceHint) {
         messages: {}
       };
     } else if (space === "moment") {
+      const anni = parseYmdToDate(fd.get("anni_date"));
+      if (!anni) {
+        toast("请填写纪念日日期");
+        return;
+      }
       body = {
         space, subtype: "anniversary", name: fd.get("name"),
         calendar: fd.get("calendar_a") === "lunar" ? "lunar" : "solar",
-        schedule: { mode: "yearly", month: fd.get("month_a") ? +fd.get("month_a") : undefined, day: fd.get("day_a") ? +fd.get("day_a") : undefined, time: fd.get("time_anni") || "09:00" },
+        schedule: {
+          mode: "yearly",
+          month: anni.getMonth() + 1,
+          day: anni.getDate(),
+          time: fd.get("time_anni") || "09:00"
+        },
         messages: { default: fd.get("msg_anni") || undefined }
       };
     } else {
+      const mode = fd.get("mode") || (space === "task" ? "once" : "daily");
+      if (mode === "weekly" && (fd.get("day_of_week") === "" || fd.get("day_of_week") == null)) {
+        toast("请选择星期几");
+        return;
+      }
       body = {
         space, name: fd.get("name"),
         schedule: {
-          mode: fd.get("mode"),
+          mode,
           time: fd.get("time_custom") || "08:00",
           month: fd.get("month_c") ? +fd.get("month_c") : undefined,
-          day: fd.get("day_c") ? +fd.get("day_c") : undefined
+          day: fd.get("day_c") ? +fd.get("day_c") : undefined,
+          day_of_week: mode === "weekly" ? +fd.get("day_of_week") : undefined
         },
         messages: { default: fd.get("msg_default") || undefined }
       };
@@ -2069,8 +2216,16 @@ document.getElementById("fab-add").onclick = () => {
 };
 document.getElementById("tab-bar").addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-view]");
-  if (btn) renderView(btn.dataset.view);
+  if (btn) {
+    if (document.querySelector(".modal-overlay")) closeModal({ fromPop: true });
+    if (currentView === "detail" && history.state?.nudge === "detail") {
+      navSilent = true;
+      history.replaceState({}, "");
+    }
+    renderView(btn.dataset.view);
+  }
 });
+setupNavigation();
 boot();
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(() => {});
