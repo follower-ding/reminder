@@ -977,8 +977,9 @@ function openDetail(id) {
 
 async function renderToday(el) {
   el.innerHTML = skeletonBlocks(3);
-  const [dash, cfg] = await Promise.all([api("/dashboard"), api("/config")]);
+  const [dash, cfg, pushSt] = await Promise.all([api("/dashboard"), api("/config"), api("/push/status")]);
   if (dash.error) { el.innerHTML = `<div class="empty-state"><p>${esc(dash.error)}</p></div>`; return; }
+  const failN = pushSt?.summary?.failed || 0;
   const pending = dash.pending || dash.today || [];
   const done = dash.done || [];
   const upcoming = dash.upcoming || [];
@@ -1048,6 +1049,7 @@ async function renderToday(el) {
         <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
       </div>` : ""}
     ${hint}
+    ${failN ? `<div class="hint-banner" id="push-fail-hint">今日有 ${failN} 条推送失败。可打开事项详情点「重试」，或飞书说「推送状态」。<button type="button" class="hint-dismiss" data-dismiss-push-hint aria-label="关闭">知道了</button></div>` : ""}
     <div class="today-list">
       ${grouped.length ? grouped.map((r, i) => pendingCard(r, i)).join("") : emptyBlock}
     </div>
@@ -1507,13 +1509,24 @@ async function renderDetail(el, id) {
         ${yearCalendarChartHTML(ev)}
         <div class="nudge-card span-2 detail-history">
           <div class="section-title"><h3>推送记录</h3></div>
-          ${hist.length ? hist.map(timelineRow).join("") : `<div class="empty-state soft"><p>${ev.type === "period" ? "还没有推送记录。经期开始后，关怀推送会出现在这里。" : "还没有推送记录"}</p></div>`}
+          ${hist.length ? hist.map((h) => timelineRow(h, ev.id)).join("") : `<div class="empty-state soft"><p>${ev.type === "period" ? "还没有推送记录。经期开始后，关怀推送会出现在这里。" : "还没有推送记录"}</p></div>`}
         </div>
       </div>
     </div>
   `;
   syncChrome();
   document.getElementById("edit-item").onclick = () => showEventForm(ev.id);
+  document.querySelectorAll(".push-retry").forEach((btn) => {
+    btn.onclick = async () => {
+      const rid = btn.getAttribute("data-id");
+      btn.disabled = true;
+      const r = await api("/events/" + rid + "/push-retry", { method: "POST", body: "{}" });
+      btn.disabled = false;
+      if (r.error) { toast(r.error); return; }
+      toast(r.ok ? "已重试推送" : "重试未成功");
+      renderDetail(el, rid);
+    };
+  });
   const moreBtn = document.getElementById("more-actions");
   const morePanel = document.getElementById("detail-more");
   if (moreBtn && morePanel) {
@@ -1617,11 +1630,14 @@ async function renderDetail(el, id) {
   }
 }
 
-function timelineRow(h) {
+function timelineRow(h, eventId) {
+  const retry = h.status === "failed" && eventId
+    ? ` <button type="button" class="btn-secondary btn-small push-retry" data-id="${eventId}">重试</button>`
+    : "";
   return `<div class="timeline-item">
     <div class="dot ${h.status === "success" ? "ok" : "fail"}"></div>
     <div>
-      <div style="font-weight:650;font-size:.9rem">${esc(h.card_preview || h.channel)}</div>
+      <div style="font-weight:650;font-size:.9rem">${esc(h.card_preview || h.channel)}${retry}</div>
       <div class="form-hint">${esc(h.sent_at || "")} · ${esc(h.channel)} · ${esc(h.status)}${h.error ? " · " + esc(h.error) : ""}</div>
     </div>
   </div>`;

@@ -1,6 +1,6 @@
 # Nudge — 产品设计文档（PRD）
 
-> **版本真源：** `package.json` = **4.2.1**（2026-07-29）  
+> **版本真源：** `package.json` = **4.2.2**（2026-07-29）  
 > **最后进度更新：** 2026-07-29  
 > **仓库：** https://github.com/follower-ding/reminder  
 

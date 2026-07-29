@@ -155,12 +155,14 @@ function helpText(brand) {
     '• 收到 — 确认今日事项',
     '• 今天事项 / 生日 / 日程 / 清单 / 概况 — 查询',
     '• 今天学什么 / GitHub / 科技快讯 — 推送精选卡',
-    '• 换学习资料 · 换热点 · 重新推送热点 — 订阅控制',
+    '• 换学习资料 · 换热点 · 重新推送热点 / 再推一次 — 订阅控制',
+    '• 推迟 XX · 停用/启用 XX · 加习惯 XX — 写操作（需回「确认」）',
+    '• 推送状态 — 今天推送成败',
     '• 经期要注意什么 · 哄哄她 — 关怀',
     '• 绑定 — 记下推送群',
     '• 帮助 — 再看一遍',
     '',
-    '其它话我会结合今日事项与订阅摘要回答；能执行的动作会自动帮你做。'
+    '其它话我会结合近几轮对话与今日事项回答；能执行的动作会自动帮你做。'
   ].join('\n');
 }
 
@@ -228,12 +230,13 @@ async function buildComfortText(offset = 0) {
   return formatComfortReply(picked, name);
 }
 
-async function buildChatContext() {
+async function buildChatContext(chatId) {
   const brain = require('./lib/feishu-brain');
+  const memory = require('./lib/feishu-memory');
+  const parts = [];
   try {
-    return await brain.buildRichChatContext();
+    parts.push(await brain.buildRichChatContext());
   } catch (e) {
-    const parts = [];
     const pending = await listPendingToday();
     if (pending.length) {
       parts.push(`今日尚未确认：${pending.map((p) => p.name).join('、')}。可回复「收到」确认。`);
@@ -241,8 +244,10 @@ async function buildChatContext() {
     const period = await periodContextNote();
     if (period) parts.push(period);
     parts.push(`上下文组装失败：${e.message}`);
-    return parts.join('\n');
   }
+  const mem = memory.contextSnippet(chatId);
+  if (mem) parts.push(mem);
+  return parts.join('\n');
 }
 
 async function pushDigestSource(source, { refresh = false } = {}) {
@@ -313,9 +318,11 @@ async function answerQa(intent, userText, qaMeta = {}) {
   if (intent === 'refresh_github') return pushDigestSource('github', { refresh: true });
 
   if (intent === 'repost_digest') {
-    const source = qaMeta.source || 'news';
+    const memory = require('./lib/feishu-memory');
+    const source = qaMeta.source || memory.getLastDigest(qaMeta.chatId) || 'news';
     const labels = { learning: '每日编程', github: 'GitHub 热门', news: '科技快讯' };
     const pushed = await pushDigestSource(source, { refresh: true });
+    memory.setLastDigest(qaMeta.chatId, source);
     if (pushed.card) {
       return {
         text: `已重新推送「${labels[source] || source}」\n\n${pushed.text || ''}`,
@@ -326,7 +333,71 @@ async function answerQa(intent, userText, qaMeta = {}) {
   }
 
   if (intent === 'learning' || intent === 'github' || intent === 'news') {
+    const memory = require('./lib/feishu-memory');
+    memory.setLastDigest(qaMeta.chatId, intent);
     return pushDigestSource(intent, { refresh: false });
+  }
+
+  if (intent === 'push_status') {
+    const ledger = require('./ledger');
+    const data = await loadData();
+    const today = dateStr();
+    const rows = ledger.listToday(data.push_ledger, today, 30);
+    const failed = rows.filter((r) => r.status === 'failed');
+    const ok = rows.filter((r) => r.status === 'success');
+    if (!rows.length) return { text: '今天还没有推送记录。' };
+    const lines = [
+      `今日推送：成功 ${ok.length} · 失败 ${failed.length}`,
+      ...failed.slice(0, 5).map((r) => `• 失败 [${r.channel}] ${r.card_preview || ''} ${r.error || ''}`.trim()),
+      ...ok.slice(0, 3).map((r) => `• 成功 [${r.channel}] ${(r.card_preview || '').slice(0, 40)}`)
+    ];
+    if (failed.length) lines.push('可在网页详情页点「重试」，或飞书说「再推一次」。');
+    return { text: lines.join('\n') };
+  }
+
+  if (intent === 'snooze' || intent === 'disable_event' || intent === 'enable_event' || intent === 'create_habit') {
+    const actions = require('./lib/feishu-actions');
+    const memory = require('./lib/feishu-memory');
+    const t = String(userText || '');
+    if (intent === 'create_habit') {
+      const name = actions.extractNameAfter(['加习惯', '新增习惯', '加一个习惯', '创建一个习惯', '加个习惯'], t)
+        || t.replace(/.*(习惯|每日)/, '').trim();
+      if (!name || name.length < 1) return { text: '请说「加习惯 喝水」这样带名称。' };
+      memory.setPending(qaMeta.chatId, {
+        type: 'create_habit',
+        name,
+        time: '09:00',
+        summary: `新增习惯「${name}」`
+      });
+      return { text: `将新增每日习惯「${name}」（09:00）。回复「确认」执行，或「取消」。` };
+    }
+    const verbs = intent === 'snooze'
+      ? ['推迟', '延期', '延后']
+      : intent === 'disable_event' ? ['停用', '关掉', '关闭'] : ['启用', '打开', '恢复'];
+    let hint = actions.extractNameAfter(verbs, t);
+    if (!hint) hint = t.replace(/^(推迟|延期|延后|停用|关掉|关闭|启用|打开|恢复)\s*/, '').trim();
+    hint = String(hint || '').replace(/到明天|明天再说|一天|一下/g, '').trim();
+    const found = await actions.resolveOneEvent(hint);
+    if (!found.ok) return { text: found.error };
+    if (intent === 'enable_event') {
+      const r = await actions.setEnabled(found.event.id, true);
+      return { text: r.ok ? `已启用「${r.name}」。` : r.error };
+    }
+    if (intent === 'snooze') {
+      memory.setPending(qaMeta.chatId, {
+        type: 'snooze',
+        eventId: found.event.id,
+        days: 1,
+        summary: `推迟「${found.event.name}」到明天`
+      });
+      return { text: `将把「${found.event.name}」推迟到明天。回复「确认」执行，或「取消」。` };
+    }
+    memory.setPending(qaMeta.chatId, {
+      type: 'disable',
+      eventId: found.event.id,
+      summary: `停用「${found.event.name}」`
+    });
+    return { text: `将停用「${found.event.name}」。回复「确认」执行，或「取消」。` };
   }
 
   return { text: '我没太理解。回「帮助」看可用指令。' };

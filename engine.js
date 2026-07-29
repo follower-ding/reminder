@@ -339,6 +339,8 @@ function logPeriodStart(ev, startDate) {
 function checkEvent(ev, n) {
   const e = migrateEvent(ev);
   if (!e.enabled) return null;
+  const todayYmd = `${n.year}-${String(n.month).padStart(2, '0')}-${String(n.day).padStart(2, '0')}`;
+  if (e.snooze_until && String(e.snooze_until) > todayYmd) return null;
   const sched = e.schedule || {};
   const mode = sched.mode || (e.type === 'period' ? 'cycle' : e.type === 'birthday' ? 'yearly' : 'daily');
   const ahead = e.remind_ahead || 0;

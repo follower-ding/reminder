@@ -187,7 +187,19 @@ function readJSONFile(file, fallback) {
 
 function writeJSONFile(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
+  const payload = JSON.stringify(data, null, 2);
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmp, payload, 'utf8');
+  try {
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    try { fs.copyFileSync(tmp, file); } finally {
+      try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+    }
+    if (e.code !== 'EXDEV') {
+      // rename failed for other reasons after copy fallback attempted
+    }
+  }
 }
 
 function getSql() {

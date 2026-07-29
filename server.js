@@ -636,7 +636,7 @@ app.get('/api/health', async (req, res) => {
     res.json({
       status: 'ok',
       time: dateStr(),
-      version: '4.2.1',
+      version: '4.2.2',
       brand: BRAND.name,
       app_url: APP_URL,
       deepseek: { configured: !!process.env.DEEPSEEK_API_KEY },
@@ -936,6 +936,41 @@ async function runScheduledPush() {
     });
   }
 
+  // Proactive companion: birthday today / period care (once per day)
+  try {
+    const { buildComfortText } = require('./feishu-event-http');
+    const chatId = config.feishu?.chat_id;
+    if (config.feishu?.enabled && chatId && feishuBot.botConfigured()) {
+      for (const raw of migrateEvents(data.events)) {
+        if (!raw.enabled || raw.archived) continue;
+        const r = checkEvent(raw, n);
+        if (!r || !r.active) continue;
+        let kind = null;
+        if (raw.type === 'birthday' && r.days === 0) kind = 'birthday';
+        else if (raw.type === 'period' && (r.care || r.cycleDay != null)) kind = 'period';
+        if (!kind) continue;
+        const cKey = ledger.makeDedupeKey(raw.id, dateStr(), 'companion', `feishu-${kind}`);
+        if (ledger.hasSuccessfulPush(led, cKey)) continue;
+        const text = await buildComfortText();
+        const sent = await feishuBot.sendTextMessage(chatId, text);
+        led = ledger.appendLedger(led, {
+          item_id: raw.id,
+          channel: `companion-${kind}`,
+          planned_at: `${dateStr()}T${String(n.hour).padStart(2, '0')}:${String(n.minute).padStart(2, '0')}:00`,
+          status: sent.ok ? 'success' : 'failed',
+          dedupe_key: cKey,
+          card_preview: text.slice(0, 80),
+          error: sent.ok ? null : (sent.error || null)
+        });
+        results.companion = { ...(results.companion || {}), [kind]: !!sent.ok };
+        results.pushed = results.pushed || !!sent.ok;
+        break; // one companion nudge per scan
+      }
+    }
+  } catch (e) {
+    results.companion_error = e.message;
+  }
+
   await saveData({ ...data, push_ledger: led });
   return results;
 }
@@ -1000,6 +1035,69 @@ app.get('/api/ledger', async (req, res) => {
     const itemId = req.query.item_id != null ? parseInt(req.query.item_id, 10) : null;
     if (Number.isFinite(itemId)) return res.json(ledger.listByItem(data.push_ledger, itemId));
     res.json(ledger.listToday(data.push_ledger, dateStr()));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/push/status', async (req, res) => {
+  try {
+    const data = await loadData();
+    const today = dateStr();
+    const rows = ledger.listToday(data.push_ledger, today, 100);
+    const failed = rows.filter((r) => r.status === 'failed');
+    const success = rows.filter((r) => r.status === 'success');
+    res.json({
+      date: today,
+      summary: { total: rows.length, success: success.length, failed: failed.length },
+      failed,
+      recent: rows.slice(0, 20),
+      last_success_at: success[0]?.sent_at || null,
+      last_failed_at: failed[0]?.sent_at || null
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/events/:id/push-retry', async (req, res) => {
+  try {
+    const data = await loadData();
+    const config = await loadConfig();
+    const id = parseInt(req.params.id, 10);
+    const ev = migrateEvents(data.events).find((e) => e.id === id);
+    if (!ev) return res.status(404).json({ error: '未找到' });
+    const n = now();
+    const r = checkEvent(ev, n);
+    if (!r || !r.active) {
+      return res.status(400).json({ error: '当前不在提醒窗口（或已推迟/停用），无法重试推送' });
+    }
+    const item = {
+      ...r,
+      eventId: ev.id,
+      name: ev.name,
+      planned_time: plannedTimeLabel(ev, config.default_push_time || '09:00')
+    };
+    const title = `${BRAND.name} · 重试推送`;
+    const pushed = await pushReminderBundle(config, [item], title);
+    let led = data.push_ledger || [];
+    const t = item.planned_time || 'manual';
+    const stamp = Date.now();
+    for (const ch of ['feishu', 'serverchan']) {
+      const result = pushed[ch];
+      if (!result) continue;
+      led = ledger.appendLedger(led, {
+        item_id: id,
+        channel: ch,
+        planned_at: `${dateStr()}T${t}:00`,
+        status: result.ok ? 'success' : 'failed',
+        dedupe_key: ledger.makeDedupeKey(id, dateStr(), `retry-${stamp}`, ch),
+        card_preview: item.message,
+        error: result.ok ? null : (result.error || 'failed')
+      });
+    }
+    await saveData({ ...data, push_ledger: led });
+    res.json({ ok: !!(pushed.feishu?.ok || pushed.serverchan?.ok), feishu: pushed.feishu, serverchan: pushed.serverchan });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

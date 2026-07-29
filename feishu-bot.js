@@ -149,8 +149,12 @@ function matchAckIntent(text) {
   const t = String(text || '').trim();
   if (!t) return null;
   const m = t.match(/^(收到|已收到|确认收到|确认|done|ok)(?:\s*[：:，,]?\s*(.+))?$/i);
-  if (!m) return null;
-  return { intent: 'ack', nameHint: (m[2] || '').trim() || null };
+  if (m) return { intent: 'ack', nameHint: (m[2] || '').trim() || null };
+  const m2 = t.match(/^(?:帮我)?确认(?:一下)?\s*[：:]?\s*(.+)$/);
+  if (m2 && m2[1] && !/经期|生理期/.test(m2[1])) {
+    return { intent: 'ack', nameHint: m2[1].replace(/[的了吧呀呢]+$/, '').trim() || null };
+  }
+  return null;
 }
 
 /** 「绑定」→ 记下 chat_id（勿交给 DeepSeek 瞎回） */
@@ -198,6 +202,11 @@ function matchQaIntent(text) {
   if (/(今天事项|今日事项|今日提醒|有什么事|今日待办|今天待办)/.test(t)) return { intent: 'today' };
   if (/(哄哄她|哄哄|说句好听|安慰一下|说点好听|来句暖)/.test(t)) return { intent: 'comfort' };
   if (/(经期|生理期)/.test(t)) return { intent: 'period' };
+  if (/^(推送状态|推送记录)$/.test(t)) return { intent: 'push_status' };
+  if (/^(推迟|延期)\s+.+/.test(t)) return { intent: 'snooze' };
+  if (/^(停用)\s+.+/.test(t)) return { intent: 'disable_event' };
+  if (/^(启用)\s+.+/.test(t)) return { intent: 'enable_event' };
+  if (/^(加习惯|新增习惯)\s+.+/.test(t)) return { intent: 'create_habit' };
   return null;
 }
 
@@ -305,11 +314,36 @@ async function handleEvent(body, handlers = {}) {
     return { http: 200, json: { ok: true, action: 'bind', chat_id: chatId || null } };
   }
 
+  const memory = require('./lib/feishu-memory');
+  const actions = require('./lib/feishu-actions');
+  memory.appendTurn(meta.chatId, 'user', meta.text);
+
+  const pendingConfirm = actions.matchConfirmIntent(meta.text);
+  if (pendingConfirm && memory.getPending(meta.chatId)) {
+    let result;
+    if (pendingConfirm.intent === 'confirm_yes') {
+      const pending = memory.getPending(meta.chatId);
+      memory.clearPending(meta.chatId);
+      result = await actions.executePending(pending);
+    } else {
+      memory.clearPending(meta.chatId);
+      result = { ok: true, text: '已取消，什么都没改。' };
+    }
+    memory.appendTurn(meta.chatId, 'assistant', result.text);
+    try {
+      if (botConfigured()) await replyText(meta.messageId, result.text || '好的。');
+    } catch (e) {
+      return { http: 200, json: { ok: true, action: 'confirm', reply_error: e.message, text: result.text } };
+    }
+    return { http: 200, json: { ok: true, action: 'confirm', text: result.text } };
+  }
+
   const ack = matchAckIntent(meta.text);
   if (ack) {
     const result = handlers.ackToday
       ? await handlers.ackToday(ack.nameHint)
       : { text: '确认能力未就绪' };
+    memory.appendTurn(meta.chatId, 'assistant', result.text || '');
     try {
       if (botConfigured()) await replyText(meta.messageId, result.text || '好的，已记下。');
     } catch (e) {
@@ -320,7 +354,7 @@ async function handleEvent(body, handlers = {}) {
 
   const qa = await resolveStructuredIntent(meta.text, handlers);
   if (qa && handlers.answerQa) {
-    const result = await handlers.answerQa(qa.intent, meta.text, qa);
+    const result = await handlers.answerQa(qa.intent, meta.text, { ...qa, chatId: meta.chatId });
     try {
       if (botConfigured()) {
         if (result?.card) await replyInteractive(meta.messageId, result.card);
@@ -344,13 +378,43 @@ async function handleEvent(body, handlers = {}) {
       contextNote = `今日尚未确认的事项：${pending.map((p) => p.name).join('、')}。用户也可回复「收到」一键确认。`;
     }
   }
-  const chat = await chatWithDeepSeek(meta.text, contextNote);
+  const memNote = memory.contextSnippet(meta.chatId);
+  const chat = await chatWithDeepSeek(meta.text, [contextNote, memNote].filter(Boolean).join('\n'));
+  memory.appendTurn(meta.chatId, 'assistant', chat.text || '');
   try {
     if (botConfigured()) await replyText(meta.messageId, chat.text);
   } catch (e) {
     return { http: 200, json: { ok: true, action: 'chat', deepseek: chat.ok, reply_error: e.message } };
   }
   return { http: 200, json: { ok: true, action: 'chat', deepseek: chat.ok } };
+}
+
+async function sendTextMessage(receiveId, text, receiveIdType = 'chat_id') {
+  if (!receiveId) return { ok: false, error: '缺少 chat_id' };
+  if (!botConfigured()) return { ok: false, error: '未配置飞书应用凭证' };
+  try {
+    const token = await getTenantAccessToken();
+    const res = await fetch(
+      `${FEISHU_HOST}/open-apis/im/v1/messages?receive_id_type=${encodeURIComponent(receiveIdType)}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          receive_id: receiveId,
+          msg_type: 'text',
+          content: JSON.stringify({ text: String(text || '').slice(0, 4000) })
+        })
+      }
+    );
+    const json = await res.json();
+    if (json.code !== 0) return { ok: false, error: json.msg || `code=${json.code}`, data: json };
+    return { ok: true, data: json };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
 }
 
 async function resolveStructuredIntent(text, handlers = {}) {
@@ -378,5 +442,6 @@ module.exports = {
   chatWithDeepSeek,
   handleEvent,
   extractMessageMeta,
-  resolveStructuredIntent
+  resolveStructuredIntent,
+  sendTextMessage
 };
