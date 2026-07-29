@@ -166,6 +166,19 @@ h1,h2,h3 { font-family: var(--font-d); font-weight: 600; letter-spacing: -.02em;
 .badge.ok { background: rgba(5,150,105,.12); color: #059669; }
 .badge.fail { background: rgba(220,38,38,.1); color: #dc2626; }
 .badge-row { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.badge.tag-badge {
+  background: rgba(91,124,114,.08); color: var(--teal);
+  font-weight: 500; font-size: .65rem;
+}
+
+.tag-filter-bar {
+  display: flex; gap: .35rem; align-items: center; flex-wrap: wrap;
+  margin-bottom: 1rem; padding: .4rem 0;
+}
+.tag-filter-bar .form-hint { font-size: .75rem; color: var(--muted); margin-right: .2rem; white-space: nowrap; }
+.tag-filter-bar .seg.small {
+  font-size: .72rem; padding: .3rem .65rem;
+}
 
 .segment {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: .35rem;

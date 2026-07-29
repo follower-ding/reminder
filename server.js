@@ -636,15 +636,58 @@ app.get('/api/health', async (req, res) => {
     res.json({
       status: 'ok',
       time: dateStr(),
-      version: '4.2.2',
+      version: '4.3.0',
       brand: BRAND.name,
       app_url: APP_URL,
       deepseek: { configured: !!process.env.DEEPSEEK_API_KEY },
       feishu_bot: { configured: feishuBot.botConfigured() },
       events: data.events.length,
+      brain_facts: Array.isArray(data.brain_facts) ? data.brain_facts.length : 0,
       vercel: !!process.env.VERCEL,
       persistence: persist
     });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Tags API ──
+app.get('/api/tags', async (req, res) => {
+  try {
+    const brain = require('./lib/feishu-brain');
+    const tags = await brain.listAllTags();
+    res.json({ tags });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Brain DB API (entity memory) ──
+app.get('/api/brain/entities', async (req, res) => {
+  try {
+    const brainDb = require('./lib/feishu-brain-db');
+    const entities = await brainDb.listEntities(req.query.type || null);
+    res.json({ entities });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/brain/entities/search', async (req, res) => {
+  try {
+    const brainDb = require('./lib/feishu-brain-db');
+    const results = await brainDb.searchEntities(req.query.q || '');
+    res.json({ results });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/brain/entities/:name', async (req, res) => {
+  try {
+    const brainDb = require('./lib/feishu-brain-db');
+    const deleted = await brainDb.deleteEntity(req.params.name);
+    res.json({ ok: deleted });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

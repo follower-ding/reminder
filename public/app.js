@@ -9,6 +9,7 @@ let currentUser = null;
 let currentView = "today";
 let detailId = null;
 let spaceFilter = "habit"; // habit | moment | task
+let tagFilter = ""; // tag name or empty for all
 let selectedIds = new Set();
 let createSpaceHint = "habit";
 
@@ -1171,7 +1172,10 @@ async function renderEvents(el) {
   const enabled = events.filter((e) => e.enabled);
   const counts = { habit: 0, moment: 0, task: 0 };
   enabled.forEach((e) => { counts[spaceOf(e)] = (counts[spaceOf(e)] || 0) + 1; });
-  const filtered = enabled.filter((e) => spaceOf(e) === spaceFilter && !e.archived);
+  // Collect all unique tags from enabled events
+  const allTags = [...new Set(enabled.flatMap((e) => (e.tags || []).filter(Boolean)))].sort();
+  const filtered = enabled.filter((e) => spaceOf(e) === spaceFilter && !e.archived
+    && (!tagFilter || (e.tags || []).some((t) => String(t).toLowerCase() === tagFilter.toLowerCase())));
   const disabled = events.filter((e) => !e.enabled && !e.archived && spaceOf(e) === spaceFilter);
   const archived = events.filter((e) => e.archived && spaceOf(e) === spaceFilter);
 
@@ -1180,7 +1184,7 @@ async function renderEvents(el) {
       <div>
         <div class="eyebrow">清单</div>
         <h2>${SPACE_META[spaceFilter].label}</h2>
-        <p class="sub">${esc(SPACE_META[spaceFilter].hint)} · 共 ${filtered.length} 项</p>
+        <p class="sub">${esc(SPACE_META[spaceFilter].hint)} · 共 ${filtered.length} 项${tagFilter ? ` · 标签「${esc(tagFilter)}」` : ''}</p>
       </div>
       <button class="btn-secondary btn-small" id="toggle-batch" type="button">批量</button>
     </div>
@@ -1190,6 +1194,13 @@ async function renderEvents(el) {
           ${SPACE_META[k].label}<span class="seg-count">${counts[k] || 0}</span>
         </button>`).join("")}
     </div>
+    ${allTags.length ? `
+    <div class="tag-filter-bar" id="tag-filter-bar">
+      <span class="form-hint">标签筛选：</span>
+      <button type="button" class="seg small ${!tagFilter ? 'active' : ''}" data-tag="">全部</button>
+      ${allTags.map((t) => `
+        <button type="button" class="seg small ${tagFilter === t ? 'active' : ''}" data-tag="${esc(t)}">${esc(t)}</button>`).join("")}
+    </div>` : ""}
     <div class="batch-bar" id="batch-bar">
       <span class="form-hint">已选 <strong id="sel-count">0</strong></span>
       <button class="btn-danger btn-small" id="batch-del" type="button">删除</button>
@@ -1208,6 +1219,13 @@ async function renderEvents(el) {
     b.onclick = () => {
       spaceFilter = b.dataset.space;
       createSpaceHint = spaceFilter;
+      tagFilter = ""; // reset tag filter on space change
+      renderEvents(el);
+    };
+  });
+  el.querySelectorAll("[data-tag]").forEach((b) => {
+    b.onclick = () => {
+      tagFilter = b.dataset.tag || "";
       renderEvents(el);
     };
   });
@@ -1284,11 +1302,14 @@ function eventCard(ev) {
   const typeBadge = (ev.type === "birthday" || ev.subtype === "birthday")
     ? `<span class="badge with-icon">${iconSvg("cake")}生日</span>`
     : "";
+  const tagBadges = (ev.tags && Array.isArray(ev.tags) && ev.tags.length)
+    ? ev.tags.map((t) => `<span class="badge tag-badge">${esc(t)}</span>`).join("")
+    : "";
   return `<article class="nudge-card clickable space-${space} ${esc(ev.type)}" data-open="${ev.id}">
     <div class="rail"></div>
     <div class="card-top">
       <div class="title">${esc(ev.name)}${ageLabel}</div>
-      <div class="badge-row">${spaceBadge(space)}${typeBadge}${calBadge}${ev.archived ? `<span class="badge">已归档</span>` : ev.enabled ? "" : `<span class="badge">停用</span>`}</div>
+      <div class="badge-row">${spaceBadge(space)}${typeBadge}${calBadge}${tagBadges}${ev.archived ? `<span class="badge">已归档</span>` : ev.enabled ? "" : `<span class="badge">停用</span>`}</div>
     </div>
     <div class="meta">${esc(scheduleMeta(ev))}</div>
     <div class="card-foot">
@@ -1964,6 +1985,7 @@ function eventFormHTML(ev, spaceHint) {
         <div class="template-row" id="template-row">${HABIT_TEMPLATES.map((t) => `<button type="button" data-tpl="${t.id}">${t.label}</button>`).join("")}</div>
       </div>
       <div class="form-group"><label>名称</label><input name="name" required value="${esc(ev?.name || "")}" placeholder="怎么称呼这件事"></div>
+      <div class="form-group"><label>标签（逗号或空格分隔）</label><input name="tags" value="${esc((ev?.tags || []).join(', '))}" placeholder="如：健康 前端 系统组件"></div>
       <div id="fields-birthday" class="${space === "moment" && subtype === "birthday" ? "" : "hidden"}">
         <div class="form-group">
           <label>出生日期（阳历）</label>
@@ -2202,6 +2224,13 @@ function setupEventForm(modal, ev, spaceHint) {
       };
     }
     Object.keys(body.schedule).forEach((k) => body.schedule[k] == null && delete body.schedule[k]);
+    // Tags: parse comma/space separated input
+    const tagsRaw = String(fd.get("tags") || "").trim();
+    if (tagsRaw) {
+      body.tags = [...new Set(tagsRaw.split(/[,;，；\s]+/).filter(Boolean))];
+    } else {
+      body.tags = [];
+    }
     const res = ev
       ? await api("/events/" + ev.id, { method: "PUT", body: JSON.stringify({ ...ev, ...body }) })
       : await api("/events", { method: "POST", body: JSON.stringify(body) });

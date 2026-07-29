@@ -149,11 +149,14 @@ async function rememberChatIdFromEvent(body) {
 function helpText(brand) {
   return [
     `我是 ${brand}，飞书里可以直接说话，不必背口令。`,
-    '例如：「最近谁过生日」「这周有什么安排」「把热点再推一次」「换点学习资料」。',
+    '例如：「最近谁过生日」「小明的生日是什么时候」「这周有什么安排」「把热点再推一次」「换点学习资料」。',
     '',
     '【常用动作】',
     '• 收到 — 确认今日事项',
-    '• 今天事项 / 生日 / 日程 / 清单 / 概况 — 查询',
+    '• 今天事项 / 生日 / 纪念日 / 日程 / 清单 / 概况 — 查询',
+    '• 小明的生日 / 妈妈的纪念日 — 查特定人的日子',
+    '• 查标签健康 / 前端相关的事项 — 按标签查',
+    '• 标签 — 查看所有标签',
     '• 今天学什么 / GitHub / 科技快讯 — 推送精选卡',
     '• 换学习资料 · 换热点 · 重新推送热点 / 再推一次 — 订阅控制',
     '• 推迟 XX · 停用/启用 XX · 加习惯 XX — 写操作（需回「确认」）',
@@ -276,6 +279,33 @@ async function answerQa(intent, userText, qaMeta = {}) {
 
   if (intent === 'birthdays') {
     return { text: brain.formatBirthdayText(await brain.listBirthdays(60)) };
+  }
+  if (intent === 'anniversaries') {
+    return { text: brain.formatAnniversaryText(await brain.listAnniversaries(60)) };
+  }
+  if (intent === 'person_query') {
+    const nameHint = qaMeta.name || userText || '';
+    const parsed = (() => {
+      const t = String(userText || '');
+      const m1 = t.match(/(.+)的生日/);
+      const m2 = t.match(/(.+)的纪念日/);
+      const m3 = t.match(/(.+)生日.*(什么时候|哪天|几号|快到了)/);
+      const m4 = t.match(/纪念日.*(.+)/);
+      const n = (m1?.[1] || m2?.[1] || m3?.[1] || m4?.[1] || nameHint)
+        .replace(/^(帮我查|查|问|看|那)/g, '').trim();
+      return n && n.length <= 20 ? n : nameHint;
+    })();
+    const result = await brain.queryPerson(parsed, 365);
+    return { text: brain.formatPersonText(result) };
+  }
+  if (intent === 'search_by_tag') {
+    const tagHint = qaMeta.tag || userText || '';
+    const rows = await brain.searchByTag(tagHint);
+    return { text: brain.formatTagSearchText(rows, tagHint) };
+  }
+  if (intent === 'list_tags') {
+    const tags = await brain.listAllTags();
+    return { text: brain.formatTagsText(tags) };
   }
   if (intent === 'upcoming') {
     return { text: brain.formatUpcomingText(await brain.listUpcoming(14)) };

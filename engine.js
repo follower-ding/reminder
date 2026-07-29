@@ -53,7 +53,8 @@ function migrateEvent(ev) {
     ...ev,
     schedule: { ...(ev.schedule || {}) },
     messages: { ...(ev.messages || {}) },
-    acks: ev.acks && typeof ev.acks === 'object' ? { ...ev.acks } : {}
+    acks: ev.acks && typeof ev.acks === 'object' ? { ...ev.acks } : {},
+    tags: Array.isArray(ev.tags) ? [...ev.tags] : []
   };
   const legacy = LEGACY_TYPE_MAP[out.type];
   if (legacy) {
@@ -836,6 +837,15 @@ function normalizeEventInput(body) {
   if (birthSolar) draft.birth_solar = birthSolar;
   if (Array.isArray(raw.capsules)) draft.capsules = raw.capsules;
   else if (Array.isArray(raw._capsules)) draft.capsules = raw._capsules;
+
+  // Tags: normalize to flat unique array
+  if (raw.tags != null) {
+    const arr = Array.isArray(raw.tags) ? raw.tags : String(raw.tags).split(/[,;，；\s]+/).filter(Boolean);
+    draft.tags = [...new Set(arr.map((t) => String(t).trim()).filter(Boolean))];
+  } else {
+    draft.tags = [];
+  }
+
   return syncTypeFromSpace(draft);
 }
 

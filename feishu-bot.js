@@ -186,6 +186,43 @@ function matchQaIntent(text) {
   if (/(谁过生日|近期生日|有哪些人.*生日|生日有谁|生日列表|哪些人生日)/.test(t) || /^(生日)$/.test(t)) {
     return { intent: 'birthdays' };
   }
+  // Person-specific: "小明的生日", "查一下小明的生日", "XX生日什么时候"
+  if (/(.+)的生日/.test(t) || /(.+)生日.*(什么时候|哪天|几号|快到了)/.test(t) || /生日.*(.+)/.test(t)) {
+    let name = '';
+    const m1 = t.match(/(.+)的生日/);
+    const m2 = t.match(/(.+)生日.*(什么时候|哪天|几号|快到了)/);
+    const m3 = t.match(/生日.*(.+)/);
+    name = (m1?.[1] || m2?.[1] || m3?.[1] || '').replace(/^(帮我查|查|问|看|那)/g, '').trim();
+    if (name && name.length <= 20 && !/^(谁|哪些|最近|什么|怎么)/.test(name)) {
+      return { intent: 'person_query', name };
+    }
+  }
+  if (/(.+)的纪念日/.test(t) || /纪念日.*(.+)/.test(t)) {
+    let name = '';
+    const m1 = t.match(/(.+)的纪念日/);
+    const m2 = t.match(/纪念日.*(.+)/);
+    name = (m1?.[1] || m2?.[1] || '').replace(/^(帮我查|查|问|看|那)/g, '').trim();
+    if (name && name.length <= 20) return { intent: 'person_query', name };
+  }
+  if (/(纪念日|纪念).*(有哪些|最近|快到|即将|马上)/.test(t) || /有哪些.*纪念/.test(t) || /^(纪念日)$/.test(t)) {
+    return { intent: 'anniversaries' };
+  }
+  // Tag search: "查标签健康", "前端相关的事项"
+  if (/(?:查|搜|找).*标签[：:\s]*(\S+)/.test(t)) {
+    const m = t.match(/(?:查|搜|找).*标签[：:\s]*(\S+)/);
+    const tag = (m?.[1] || '').replace(/[的之]/g, '').trim();
+    if (tag && tag.length <= 20) return { intent: 'search_by_tag', tag };
+  }
+  if (/(\S+).*(?:相关|有关|关联).*(?:事项|习惯|事件|东西)/.test(t)) {
+    const m = t.match(/(\S+).*(?:相关|有关|关联).*(?:事项|习惯|事件|东西)/);
+    const tag = (m?.[1] || '').replace(/[的之]/g, '').trim();
+    if (tag && tag.length <= 20 && !/^(什么|哪些|所有|全部|最近|今天)/.test(tag)) {
+      return { intent: 'search_by_tag', tag };
+    }
+  }
+  if (/(?:有哪些|列出|显示).*(?:标签|分类|类别|tag)/.test(t) || /^(标签|分类|tag|tags)$/i.test(t)) {
+    return { intent: 'list_tags' };
+  }
   if (/(即将|日程|这周有什么|未来.*事项|近期提醒|两周内)/.test(t) || /^(日程)$/.test(t)) {
     return { intent: 'upcoming' };
   }
@@ -317,6 +354,12 @@ async function handleEvent(body, handlers = {}) {
   const memory = require('./lib/feishu-memory');
   const actions = require('./lib/feishu-actions');
   memory.appendTurn(meta.chatId, 'user', meta.text);
+
+  // Fire-and-forget: extract entity facts from this message in the background
+  if (meta.text && meta.text.length > 4) {
+    const { extractFromMessage } = require('./lib/feishu-entity-extractor');
+    extractFromMessage(meta.text, meta.chatId).catch(() => {});
+  }
 
   const pendingConfirm = actions.matchConfirmIntent(meta.text);
   if (pendingConfirm && memory.getPending(meta.chatId)) {
